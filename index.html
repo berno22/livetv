@@ -14,6 +14,10 @@
         --muted: #777777;
         --line: #d0d0d0;
         --accent: #e82127;
+        /* Green, deliberately not the red accent. The red is the Live badge's
+           colour and means "recording"; a red Drive toggle read as a second
+           live indicator rather than a mode. */
+        --go: #12a150;
       }
       * {
         margin: 0;
@@ -50,6 +54,13 @@
         display: flex;
         align-items: center;
         gap: 28px;
+      }
+      /* Sits immediately to the right of the All Media link, so the two read as
+         one group rather than the toggle drifting off to the far edge. */
+      header .left {
+        display: flex;
+        align-items: center;
+        gap: 18px;
       }
       .all-media {
         color: var(--muted);
@@ -108,6 +119,93 @@
         font-size: 16px;
       }
 
+      /* ---- Drive-proof mode -------------------------------------------
+         The <video> element is what freezes when the car is in Drive, so in
+         this mode the picture is drawn to a canvas by WebCodecs instead and no
+         media element is used for video at all. */
+      #myPlayer.hidden-el,
+      #myCanvas.hidden-el {
+        display: none !important;
+      }
+      #myCanvas {
+        display: none;
+        width: 100%;
+        max-width: 1120px;
+        aspect-ratio: 16 / 9;
+        background: #000;
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 48px;
+      }
+      #myCanvas.on {
+        display: block;
+      }
+
+      /* The toggle. Labelled from its state so it is obvious which mode is
+         active without reading anything. */
+      #driveToggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 7px 14px 7px 10px;
+        font: inherit;
+        font-size: 12px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: var(--muted);
+        cursor: pointer;
+        transition: color 0.2s, border-color 0.2s, background 0.2s;
+      }
+      #driveToggle:hover {
+        color: var(--text);
+        border-color: var(--text);
+      }
+      #driveToggle .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--line);
+        transition: background 0.2s, box-shadow 0.2s;
+      }
+      #driveToggle.on {
+        color: var(--go);
+        border-color: var(--go);
+        background: rgba(18, 161, 80, 0.08);
+      }
+      #driveToggle.on .dot {
+        background: var(--go);
+        box-shadow: 0 0 8px var(--go);
+      }
+
+      /* A short-lived note, used for the "this channel can't use Drive mode"
+         fallback and for a tap that needs sound. Deliberately quiet: it should
+         not become a permanent panel in a car. */
+      #note {
+        position: fixed;
+        left: 50%;
+        bottom: 26px;
+        transform: translateX(-50%) translateY(10px);
+        background: rgba(0, 0, 0, 0.86);
+        color: #fff;
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        letter-spacing: 0.4px;
+        padding: 10px 18px;
+        border-radius: 999px;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s, transform 0.3s;
+        z-index: 30;
+        max-width: 84vw;
+        text-align: center;
+      }
+      #note.show {
+        opacity: 1;
+        transform: translateX(-50%) translateY(0);
+      }
+
       .section-title {
         font-size: 20px;
         font-weight: 800;
@@ -161,7 +259,13 @@
   <body>
 
     <header>
-      <a class="all-media" href="https://berno22.github.io/">All Media</a>
+      <div class="left">
+        <a class="all-media" href="https://berno22.github.io/">All Media</a>
+        <button id="driveToggle" type="button" aria-pressed="false"
+                title="Drive-proof mode: decode with WebCodecs and draw to a canvas, so playback keeps running while the car is in Drive">
+          <span class="dot"></span><span id="driveLabel">Drive</span>
+        </button>
+      </div>
       <div class="right">
         <span id="liveBadge" class="live-badge"><span class="dot"></span>Live</span>
       </div>
@@ -169,10 +273,16 @@
 
     <main>
       <video id="myPlayer" class="video-js" controls></video>
+      <!-- Drive-proof picture. Empty and hidden until Drive mode is switched
+           on; WebCodecs frames are painted straight onto it. -->
+      <canvas id="myCanvas" width="1280" height="720"></canvas>
 
       <h1 class="section-title">Channels</h1>
       <div id="channelGrid" class="channel-grid"></div>
     </main>
+
+    <!-- Declared before the script below, which binds it on load. -->
+    <div id="note"></div>
 
     <script>
       var selected = null;
@@ -185,16 +295,198 @@
       var baseUrl7 = '+{KwUO8:5$41m';
       var baseUrl8 = '/livetv.epg/';
       var player = videojs('myPlayer');
+      var canvas = document.getElementById('myCanvas');
+      var driveToggle = document.getElementById('driveToggle');
+      var driveLabel = document.getElementById('driveLabel');
+      var noteEl = document.getElementById('note');
+
+      // =====================================================================
+      // Drive-proof mode
+      //
+      // The normal path is video.js + application/x-mpegURL: MSE feeding a
+      // <video> element. That is exactly what freezes when the car is in Drive.
+      // In Drive mode we instead fetch the TS ourselves, decode with WebCodecs
+      // and paint to a canvas, so no media element is involved in the picture
+      // at all. Turning the toggle off returns to the original player, which
+      // makes the two directly comparable.
+      // =====================================================================
+      var Q = new URLSearchParams(location.search);
+      // ?gain= sets how hard the quiet source is lifted. ?maxw= caps the canvas.
+      var DRIVE = {
+        on: Q.get('drive') === '1' || localStorage.getItem('livetv.drive') === '1',
+        gain: parseFloat(Q.get('gain')) || 4,
+        maxw: parseInt(Q.get('maxw'), 10) || 1280,
+        stats: Q.get('stats') !== '0'
+      };
+      var engine = null;
+      var libsLoading = null;
+      var currentChannel = null;
+      var noteTimer = 0;
+
+      // The two libraries are only fetched when Drive mode is actually used, so
+      // an ordinary desktop visit does not pay for them.
+      var LIB_SOURCES = [
+        'https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.js',
+        'https://cdn.jsdelivr.net/npm/mp4box@0.5.2/dist/mp4box.all.min.js'
+      ];
+
+      function loadScript(src) {
+        return new Promise(function (res, rej) {
+          var s = document.createElement('script');
+          s.src = src;
+          s.onload = res;
+          s.onerror = function () { rej(new Error('failed to load ' + src)); };
+          document.head.appendChild(s);
+        });
+      }
+
+      function ensureEngine() {
+        if (engine) return Promise.resolve(engine);
+        if (libsLoading) return libsLoading;
+        libsLoading = loadScript('tesla-engine.js').then(function () {
+          // Sequential on purpose: mp4box and mux.js are independent, but
+          // keeping it ordered makes a failure obvious.
+          return LIB_SOURCES.reduce(function (p, src) {
+            return p.then(function () { return loadScript(src); });
+          }, Promise.resolve());
+        }).then(function () {
+          engine = new TeslaPlayer({ canvas: canvas, gain: DRIVE.gain, maxWidth: DRIVE.maxw });
+          engine.on('note', showNote);
+          engine.on('fail', onEngineFail);
+          // Exposed so the picture and the audio chain can be inspected from the
+          // console, and so the test suite can read real state rather than
+          // scraping the DOM for it.
+          window.__eng = engine;
+          return engine;
+        }).catch(function (e) {
+          libsLoading = null;
+          throw e;
+        });
+        return libsLoading;
+      }
+
+      // A quiet, self-clearing message. In a car this has to be readable at a
+      // glance and then get out of the way.
+      function showNote(msg, ms) {
+        noteEl.textContent = msg;
+        noteEl.classList.add('show');
+        clearTimeout(noteTimer);
+        noteTimer = setTimeout(function () { noteEl.classList.remove('show'); }, ms || 3600);
+      }
+
+      // If the engine cannot run this channel, hand it back to video.js rather
+      // than leaving a dead screen. 83 channels of unknown configs means this
+      // will happen eventually.
+      function onEngineFail(msg) {
+        showNote('Drive mode can\'t play this channel - using the normal player', 4200);
+        fallbackToVideoJs();
+      }
+
+      function fallbackToVideoJs() {
+        setDrive(false, true);
+        if (currentChannel) loadChannel(currentChannel);
+      }
+
+      function setDrive(on, skipPersist) {
+        DRIVE.on = !!on;
+        if (!skipPersist) {
+          try { localStorage.setItem('livetv.drive', DRIVE.on ? '1' : '0'); } catch (e) {}
+        }
+        driveToggle.classList.toggle('on', DRIVE.on);
+        driveToggle.setAttribute('aria-pressed', DRIVE.on ? 'true' : 'false');
+        driveLabel.textContent = DRIVE.on ? 'Drive on' : 'Drive';
+        canvas.classList.toggle('on', DRIVE.on);
+        document.getElementById('myPlayer').classList.toggle('hidden-el', DRIVE.on);
+        canvas.classList.toggle('hidden-el', !DRIVE.on);
+        // Switching modes mid-playback: stop whichever one is running so the
+        // two never fight over the audio device. Leaving Drive mode tears the
+        // whole engine down, audio chain included.
+        if (DRIVE.on) { try { player.pause(); } catch (e) {} }
+        else if (engine) { engine.destroy(); engine = null; window.__eng = null; libsLoading = null; }
+      }
+
+      // Build the engine if it is not there yet, then play a channel through it.
+      //
+      // This is reached on a page LOAD as well as from the toggle, and that
+      // matters: the libraries are only fetched the first time Drive mode is
+      // used, but the choice itself is remembered. So someone who refreshes
+      // with Drive mode already on arrives with the toggle lit, the canvas
+      // showing and no engine - and the only thing that ever built one was the
+      // toggle tap they had not made yet. Checking for the engine here and
+      // quietly falling through to video.js put the picture into a hidden
+      // element: audio, no image, and a black canvas.
+      function startDrive(channel) {
+        ensureEngine().then(function () {
+          // The toggle may have been flipped back while we were loading.
+          if (!DRIVE.on) return;
+          openDrive(channel);
+        }).catch(function (e) {
+          showNote('Could not start Drive mode: ' + e.message, 5000);
+          fallbackToVideoJs();
+        });
+      }
+
+      driveToggle.addEventListener('click', function () {
+        var next = !DRIVE.on;
+        setDrive(next);
+        if (next) {
+          if (currentChannel) startDrive(currentChannel);
+          // No channel chosen yet: just warm the engine up, so the first tap
+          // starts instantly instead of waiting on three scripts.
+          else ensureEngine().catch(function (e) {
+            showNote('Could not start Drive mode: ' + e.message, 5000);
+            fallbackToVideoJs();
+          });
+        }
+      });
+
+      // Open a channel in the engine, with a guard so a channel that cannot
+      // start does not sit on a blank canvas forever.
+      function openDrive(channel) {
+        if (!engine) return;
+        var url = channelUrl(channel);
+        engine.open(url, { name: channel });
+        // Read the generation AFTER open(): open() bumps it itself, so
+        // capturing it beforehand would never match and the guard below would
+        // fire on a channel that is actually fine.
+        var gen = engine.gen;
+        setTimeout(function () {
+          // Order matters, and all three checks are needed. Drive mode being off
+          // means the engine's own 'fail' event has already handed this channel
+          // back to video.js; without that check the fallback and this timeout
+          // both fire and the stream is torn down and started twice, which on a
+          // slow car connection is two visible stalls instead of one. Turning
+          // the toggle off also DESTROYS the engine, so `engine` can be null by
+          // the time this runs - and reading .gen on it throws.
+          if (!DRIVE.on || !engine) return;
+          if (engine.gen !== gen) return;
+          var st = engine.state();
+          if (st.stage === 'error' || (!st.drawn && st.fatal)) {
+            showNote('Drive mode can\'t play this channel - using the normal player', 4200);
+            fallbackToVideoJs();
+          }
+        }, 9000);
+      }
+
+      function channelUrl(channel) {
+        var base = baseUrl1 + baseUrl2 + baseUrl3 + baseUrl4 + baseUrl5 + baseUrl6 + baseUrl7 + baseUrl8;
+        return streamOverrides[channel] || base + channel + '.m3u8';
+      }
 
       function loadChannel(channel) {
-        var base = baseUrl1 + baseUrl2 + baseUrl3 + baseUrl4 + baseUrl5 + baseUrl6 + baseUrl7 + baseUrl8;
-        var url = streamOverrides[channel] || base + channel + '.m3u8';
         var video = document.getElementById("myPlayer");
-        video.style.display = "block";
-        video.classList.add("vjs-fluid");
         document.getElementById("liveBadge").style.display = "inline-block";
         window.scrollTo({ top: 0, behavior: 'smooth' });
-        player.src({ src: url, type: 'application/x-mpegURL' });
+        currentChannel = channel;
+        // Gate on the mode the user asked for, NOT on whether the engine happens
+        // to be built yet. Checking `engine` here was the bug: on a restored
+        // Drive-mode session it is still null, so this fell through to video.js
+        // - whose element setDrive() had already hidden - giving audio with a
+        // black canvas and no way out except toggling twice.
+        if (DRIVE.on) { startDrive(channel); return; }
+        video.style.display = "block";
+        video.classList.add("vjs-fluid");
+        player.src({ src: channelUrl(channel), type: 'application/x-mpegURL' });
         player.play();
       }
 
@@ -202,6 +494,9 @@
         var video = document.getElementById("myPlayer");
         player.pause();
         player.src("");
+        // Stop the engine too, or it keeps fetching and decoding into a canvas
+        // nobody is looking at.
+        if (engine) engine.close();
         video.style.display = "none";
         video.classList.remove("vjs-fluid");
         document.getElementById("liveBadge").style.display = "none";
@@ -250,6 +545,11 @@
       }
 
       loadChannels();
+
+      // Apply the stored choice. The engine is only built once the toggle is
+      // actually used, so a returning Drive-mode visitor sees the canvas and
+      // the toggle lit, and nothing is downloaded until they pick a channel.
+      setDrive(DRIVE.on, true);
 
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js');

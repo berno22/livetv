@@ -1,4 +1,7 @@
-const CACHE_NAME = 'starlite-logos-v2';
+// Bumped to v3 for the Drive-mode toggle. This worker also caches navigations,
+// so without the bump the car can keep serving the previous index.html and the
+// toggle simply will not be there - which looks exactly like the change failing.
+const CACHE_NAME = 'starlite-logos-v3';
 
 self.addEventListener('install', event => {
   self.skipWaiting();
