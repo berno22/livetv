@@ -1,7 +1,11 @@
 // Bumped to v3 for the Drive-mode toggle. This worker also caches navigations,
 // so without the bump the car can keep serving the previous index.html and the
 // toggle simply will not be there - which looks exactly like the change failing.
-const CACHE_NAME = 'starlite-logos-v3';
+// v4: InMotion mode becomes the default, is renamed from Drive, CHANNELS
+// stops playback, and the stage gains a loading state. This worker caches
+// navigations, so without the bump a returning visitor keeps the previous
+// page and every one of those changes looks like it did not deploy.
+const CACHE_NAME = 'starlite-logos-v4';
 
 self.addEventListener('install', event => {
   self.skipWaiting();

@@ -119,16 +119,25 @@
         font-size: 16px;
       }
 
-      /* ---- Drive-proof mode -------------------------------------------
+      /* ---- InMotion mode ----------------------------------------------
          The <video> element is what freezes when the car is in Drive, so in
          this mode the picture is drawn to a canvas by WebCodecs instead and no
-         media element is used for video at all. */
+         media element is used for video at all.
+
+         The canvas sits inside a stage that is ALWAYS present while the mode is
+         on, so at rest you get a black screen rather than no screen: it reads
+         as a player that is idle, not as a page that has failed to load. The
+         same box carries the loading state, which matters in a car where a
+         silent black rectangle is indistinguishable from a crash. */
       #myPlayer.hidden-el,
-      #myCanvas.hidden-el {
+      #myCanvas.hidden-el,
+      #stage.hidden-el,
+      #stageMsg.hidden-el {
         display: none !important;
       }
-      #myCanvas {
+      #stage {
         display: none;
+        position: relative;
         width: 100%;
         max-width: 1120px;
         aspect-ratio: 16 / 9;
@@ -137,8 +146,60 @@
         overflow: hidden;
         margin-bottom: 48px;
       }
-      #myCanvas.on {
+      #stage.on {
         display: block;
+      }
+      #myCanvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: #000;
+      }
+      #stageMsg {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        color: #fff;
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        pointer-events: none;
+      }
+      #stageMsg .spin {
+        width: 34px;
+        height: 34px;
+        border: 2px solid rgba(255, 255, 255, 0.25);
+        border-top-color: var(--go);
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+
+      /* The Channels heading doubles as the stop control. */
+      .section-title.stoppable {
+        cursor: pointer;
+        transition: color 0.2s;
+      }
+      .section-title.stoppable:hover {
+        color: var(--text);
+      }
+      .section-title .stop-hint {
+        font-size: 11px;
+        letter-spacing: 2px;
+        opacity: 0;
+        margin-left: 10px;
+        text-transform: uppercase;
+        color: var(--accent);
+        transition: opacity 0.2s;
+      }
+      .section-title.stoppable:hover .stop-hint {
+        opacity: 1;
       }
 
       /* The toggle. Labelled from its state so it is obvious which mode is
@@ -180,7 +241,7 @@
         box-shadow: 0 0 8px var(--go);
       }
 
-      /* A short-lived note, used for the "this channel can't use Drive mode"
+      /* A short-lived note, used for the "this channel can't use InMotion"
          fallback and for a tap that needs sound. Deliberately quiet: it should
          not become a permanent panel in a car. */
       #note {
@@ -262,8 +323,8 @@
       <div class="left">
         <a class="all-media" href="https://berno22.github.io/">All Media</a>
         <button id="driveToggle" type="button" aria-pressed="false"
-                title="Drive-proof mode: decode with WebCodecs and draw to a canvas, so playback keeps running while the car is in Drive">
-          <span class="dot"></span><span id="driveLabel">Drive</span>
+                title="InMotion mode: decode with WebCodecs and draw to a canvas, so playback keeps running while the car is in Drive">
+          <span class="dot"></span><span id="driveLabel">InMotion</span>
         </button>
       </div>
       <div class="right">
@@ -273,11 +334,21 @@
 
     <main>
       <video id="myPlayer" class="video-js" controls></video>
-      <!-- Drive-proof picture. Empty and hidden until Drive mode is switched
-           on; WebCodecs frames are painted straight onto it. -->
-      <canvas id="myCanvas" width="1280" height="720"></canvas>
 
-      <h1 class="section-title">Channels</h1>
+      <!-- InMotion picture. WebCodecs frames are painted straight onto the
+           canvas; the stage around it is what you actually see, and it stays
+           on screen (black) whenever the mode is on, even at rest. -->
+      <div id="stage">
+        <canvas id="myCanvas" width="1280" height="720"></canvas>
+        <div id="stageMsg" class="hidden-el">
+          <span class="spin"></span><span id="stageMsgText">Loading</span>
+        </div>
+      </div>
+
+      <h1 class="section-title stoppable" id="channelsHeading" role="button" tabindex="0"
+          aria-label="Channels, tap to stop playback">
+        Channels<span class="stop-hint">tap to stop</span>
+      </h1>
       <div id="channelGrid" class="channel-grid"></div>
     </main>
 
@@ -296,24 +367,43 @@
       var baseUrl8 = '/livetv.epg/';
       var player = videojs('myPlayer');
       var canvas = document.getElementById('myCanvas');
+      var stage = document.getElementById('stage');
+      var stageMsg = document.getElementById('stageMsg');
+      var stageMsgText = document.getElementById('stageMsgText');
       var driveToggle = document.getElementById('driveToggle');
       var driveLabel = document.getElementById('driveLabel');
       var noteEl = document.getElementById('note');
 
       // =====================================================================
-      // Drive-proof mode
+      // InMotion mode
       //
       // The normal path is video.js + application/x-mpegURL: MSE feeding a
       // <video> element. That is exactly what freezes when the car is in Drive.
-      // In Drive mode we instead fetch the TS ourselves, decode with WebCodecs
+      // In InMotion mode we instead fetch the TS ourselves, decode with WebCodecs
       // and paint to a canvas, so no media element is involved in the picture
       // at all. Turning the toggle off returns to the original player, which
       // makes the two directly comparable.
+      //
+      // It is the DEFAULT, because it is the one that works in the car and it
+      // is verified there. But only where it can actually run: defaulting to a
+      // mode the browser cannot do would mean landing on a black rectangle and
+      // then bouncing to video.js a moment later, so a browser without
+      // WebCodecs starts on the normal player instead.
       // =====================================================================
       var Q = new URLSearchParams(location.search);
+      var CAN_WEB_CODECS = typeof VideoDecoder !== 'undefined' &&
+                           typeof AudioDecoder !== 'undefined';
+      function driveDefault() {
+        var q = Q.get('drive');
+        if (q === '1') return true;
+        if (q === '0') return false;
+        var stored = localStorage.getItem('livetv.drive');
+        if (stored !== null) return stored === '1';
+        return CAN_WEB_CODECS;
+      }
       // ?gain= sets how hard the quiet source is lifted. ?maxw= caps the canvas.
       var DRIVE = {
-        on: Q.get('drive') === '1' || localStorage.getItem('livetv.drive') === '1',
+        on: driveDefault(),
         gain: parseFloat(Q.get('gain')) || 4,
         maxw: parseInt(Q.get('maxw'), 10) || 1280,
         stats: Q.get('stats') !== '0'
@@ -322,8 +412,30 @@
       var libsLoading = null;
       var currentChannel = null;
       var noteTimer = 0;
+      var loadTimer = 0;
 
-      // The two libraries are only fetched when Drive mode is actually used, so
+      // Three states on one black box, because in a car a silent rectangle is
+      // indistinguishable from a crash: idle (black), loading (spinner), playing
+      // (picture). Anything else has to be told apart deliberately.
+      function showIdle() {
+        clearLoadTimer();
+        stageMsg.classList.add('hidden-el');
+      }
+      function showLoading(text) {
+        stageMsgText.textContent = text || 'Loading';
+        stageMsg.classList.remove('hidden-el');
+        clearLoadTimer();
+        // If it never arrives, say so rather than spinning forever: a stuck
+        // spinner is indistinguishable from a crash just as much as black is.
+        loadTimer = setTimeout(function () {
+          stageMsgText.textContent = 'Still loading - tap a channel to retry';
+        }, 12000);
+      }
+      function clearLoadTimer() {
+        if (loadTimer) { clearTimeout(loadTimer); loadTimer = 0; }
+      }
+
+      // The two libraries are only fetched when InMotion mode is actually used, so
       // an ordinary desktop visit does not pay for them.
       var LIB_SOURCES = [
         'https://cdn.jsdelivr.net/npm/mux.js@6.3.0/dist/mux.js',
@@ -353,6 +465,15 @@
           engine = new TeslaPlayer({ canvas: canvas, gain: DRIVE.gain, maxWidth: DRIVE.maxw });
           engine.on('note', showNote);
           engine.on('fail', onEngineFail);
+          // Clear the loading state on the first painted frame, not on a timer.
+          // A fixed delay is either slower than it needs to be or flickers the
+          // picture away for a frame; the engine already knows when a frame
+          // arrives.
+          engine.on('state', function (st) {
+            if (!st) return;
+            if (st.stage === 'idle') showIdle();
+            else if (st.drawn > 0) showIdle();
+          });
           // Exposed so the picture and the audio chain can be inspected from the
           // console, and so the test suite can read real state rather than
           // scraping the DOM for it.
@@ -378,7 +499,8 @@
       // than leaving a dead screen. 83 channels of unknown configs means this
       // will happen eventually.
       function onEngineFail(msg) {
-        showNote('Drive mode can\'t play this channel - using the normal player', 4200);
+        showIdle();
+        showNote('InMotion can\'t play this channel - using the normal player', 4200);
         fallbackToVideoJs();
       }
 
@@ -394,34 +516,43 @@
         }
         driveToggle.classList.toggle('on', DRIVE.on);
         driveToggle.setAttribute('aria-pressed', DRIVE.on ? 'true' : 'false');
-        driveLabel.textContent = DRIVE.on ? 'Drive on' : 'Drive';
-        canvas.classList.toggle('on', DRIVE.on);
+        driveLabel.textContent = DRIVE.on ? 'InMotion on' : 'InMotion';
+        // The STAGE is what is shown, not the bare canvas: it stays on screen
+        // whenever the mode is on, so at rest you see a black player rather than
+        // a gap where a player ought to be.
+        stage.classList.toggle('on', DRIVE.on);
+        stage.classList.toggle('hidden-el', !DRIVE.on);
         document.getElementById('myPlayer').classList.toggle('hidden-el', DRIVE.on);
-        canvas.classList.toggle('hidden-el', !DRIVE.on);
         // Switching modes mid-playback: stop whichever one is running so the
-        // two never fight over the audio device. Leaving Drive mode tears the
+        // two never fight over the audio device. Leaving InMotion mode tears the
         // whole engine down, audio chain included.
-        if (DRIVE.on) { try { player.pause(); } catch (e) {} }
-        else if (engine) { engine.destroy(); engine = null; window.__eng = null; libsLoading = null; }
+        if (DRIVE.on) {
+          try { player.pause(); } catch (e) {}
+          if (!currentChannel) showIdle();
+        } else if (engine) {
+          engine.destroy(); engine = null; window.__eng = null; libsLoading = null;
+        }
       }
 
       // Build the engine if it is not there yet, then play a channel through it.
       //
       // This is reached on a page LOAD as well as from the toggle, and that
-      // matters: the libraries are only fetched the first time Drive mode is
+      // matters: the libraries are only fetched the first time InMotion is
       // used, but the choice itself is remembered. So someone who refreshes
-      // with Drive mode already on arrives with the toggle lit, the canvas
+      // with InMotion already on arrives with the toggle lit, the canvas
       // showing and no engine - and the only thing that ever built one was the
       // toggle tap they had not made yet. Checking for the engine here and
       // quietly falling through to video.js put the picture into a hidden
       // element: audio, no image, and a black canvas.
       function startDrive(channel) {
+        showLoading();
         ensureEngine().then(function () {
           // The toggle may have been flipped back while we were loading.
-          if (!DRIVE.on) return;
+          if (!DRIVE.on) { showIdle(); return; }
           openDrive(channel);
         }).catch(function (e) {
-          showNote('Could not start Drive mode: ' + e.message, 5000);
+          showIdle();
+          showNote('Could not start InMotion mode: ' + e.message, 5000);
           fallbackToVideoJs();
         });
       }
@@ -434,9 +565,43 @@
           // No channel chosen yet: just warm the engine up, so the first tap
           // starts instantly instead of waiting on three scripts.
           else ensureEngine().catch(function (e) {
-            showNote('Could not start Drive mode: ' + e.message, 5000);
+            showIdle();
+            showNote('Could not start InMotion mode: ' + e.message, 5000);
             fallbackToVideoJs();
           });
+        }
+      });
+
+      // Tapping CHANNELS stops whatever is playing. In a car the grid is always
+      // right there, so it is the obvious target for "I want it off" - and a
+      // black box with no way to dismiss it is worse than no picture at all.
+      function stopPlayback() {
+        if (engine) engine.close();
+        try { player.pause(); player.src(""); } catch (e) {}
+        var video = document.getElementById('myPlayer');
+        video.style.display = "none";
+        video.classList.remove('vjs-fluid');
+        document.getElementById('liveBadge').style.display = 'none';
+        currentChannel = null;
+        if (selected) { selected.classList.remove('selected'); selected = null; }
+        // Back to idle: a black stage, no spinner.
+        showIdle();
+        if (canvas.getContext) {
+          try {
+            var g = canvas.getContext('2d');
+            g.fillStyle = '#000';
+            g.fillRect(0, 0, canvas.width, canvas.height);
+          } catch (e) {}
+        }
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      var channelsHeading = document.getElementById('channelsHeading');
+      channelsHeading.addEventListener('click', stopPlayback);
+      channelsHeading.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+          e.preventDefault();
+          stopPlayback();
         }
       });
 
@@ -451,7 +616,7 @@
         // fire on a channel that is actually fine.
         var gen = engine.gen;
         setTimeout(function () {
-          // Order matters, and all three checks are needed. Drive mode being off
+          // Order matters, and all three checks are needed. InMotion being off
           // means the engine's own 'fail' event has already handed this channel
           // back to video.js; without that check the fallback and this timeout
           // both fire and the stream is torn down and started twice, which on a
@@ -462,7 +627,8 @@
           if (engine.gen !== gen) return;
           var st = engine.state();
           if (st.stage === 'error' || (!st.drawn && st.fatal)) {
-            showNote('Drive mode can\'t play this channel - using the normal player', 4200);
+            showIdle();
+            showNote('InMotion can\'t play this channel - using the normal player', 4200);
             fallbackToVideoJs();
           }
         }, 9000);
@@ -480,7 +646,7 @@
         currentChannel = channel;
         // Gate on the mode the user asked for, NOT on whether the engine happens
         // to be built yet. Checking `engine` here was the bug: on a restored
-        // Drive-mode session it is still null, so this fell through to video.js
+        // InMotion session it is still null, so this fell through to video.js
         // - whose element setDrive() had already hidden - giving audio with a
         // black canvas and no way out except toggling twice.
         if (DRIVE.on) { startDrive(channel); return; }
@@ -491,15 +657,7 @@
       }
 
       function closeFrame() {
-        var video = document.getElementById("myPlayer");
-        player.pause();
-        player.src("");
-        // Stop the engine too, or it keeps fetching and decoding into a canvas
-        // nobody is looking at.
-        if (engine) engine.close();
-        video.style.display = "none";
-        video.classList.remove("vjs-fluid");
-        document.getElementById("liveBadge").style.display = "none";
+        stopPlayback();
       }
 
       function selectChannel(el, name) {
