@@ -50,11 +50,6 @@
         align-items: center;
         justify-content: space-between;
       }
-      header .right {
-        display: flex;
-        align-items: center;
-        gap: 28px;
-      }
       /* Sits immediately to the right of the All Media link, so the two read as
          one group rather than the toggle drifting off to the far edge. */
       header .left {
@@ -72,25 +67,6 @@
       }
       .all-media:hover {
         color: var(--text);
-      }
-      .live-badge {
-        display: none;
-        font-size: 13px;
-        letter-spacing: 3px;
-        text-transform: uppercase;
-        color: var(--accent);
-      }
-      .live-badge .dot {
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--accent);
-        margin-right: 8px;
-        animation: blink 2s infinite;
-      }
-      @keyframes blink {
-        50% { opacity: 0; }
       }
 
       main {
@@ -148,6 +124,11 @@
       }
       #stage.on {
         display: block;
+        animation: stageIn 0.22s ease;
+      }
+      @keyframes stageIn {
+        from { opacity: 0; transform: translateY(-6px); }
+        to { opacity: 1; transform: none; }
       }
       #myCanvas {
         display: block;
@@ -181,25 +162,15 @@
         to { transform: rotate(360deg); }
       }
 
-      /* The Channels heading doubles as the stop control. */
+      /* The Channels heading doubles as the stop control. No visible label for
+         it: a permanent "tap to stop" competes with the heading, and it has to
+         be discovered by touching it anyway. */
       .section-title.stoppable {
         cursor: pointer;
         transition: color 0.2s;
       }
       .section-title.stoppable:hover {
         color: var(--text);
-      }
-      .section-title .stop-hint {
-        font-size: 11px;
-        letter-spacing: 2px;
-        opacity: 0;
-        margin-left: 10px;
-        text-transform: uppercase;
-        color: var(--accent);
-        transition: opacity 0.2s;
-      }
-      .section-title.stoppable:hover .stop-hint {
-        opacity: 1;
       }
 
       /* The toggle. Labelled from its state so it is obvious which mode is
@@ -327,9 +298,9 @@
           <span class="dot"></span><span id="driveLabel">InMotion</span>
         </button>
       </div>
-      <div class="right">
-        <span id="liveBadge" class="live-badge"><span class="dot"></span>Live</span>
-      </div>
+      <!-- The red LIVE badge used to live here. It only ever said "a stream is
+           running", which the picture already says, and it was the one red
+           thing left on a page that is otherwise black, white and green. -->
     </header>
 
     <main>
@@ -346,9 +317,7 @@
       </div>
 
       <h1 class="section-title stoppable" id="channelsHeading" role="button" tabindex="0"
-          aria-label="Channels, tap to stop playback">
-        Channels<span class="stop-hint">tap to stop</span>
-      </h1>
+          aria-label="Channels, tap to stop playback">Channels</h1>
       <div id="channelGrid" class="channel-grid"></div>
     </main>
 
@@ -414,9 +383,23 @@
       var noteTimer = 0;
       var loadTimer = 0;
 
+      // The stage is only on screen when there is something to put in it. An
+      // empty black rectangle above the channel grid said nothing and took up
+      // most of the first screen; collapsed, the page opens straight onto the
+      // grid and the picture appears where you tapped.
+      var stageUp = false;
+      function setStageUp(up) {
+        stageUp = !!up && DRIVE.on;
+        var show = DRIVE.on && stageUp;
+        stage.classList.toggle('on', show);
+        stage.classList.toggle('hidden-el', !show);
+        // Nothing to look at, so nothing to be loading.
+        if (!show) showIdle();
+      }
+
       // Three states on one black box, because in a car a silent rectangle is
-      // indistinguishable from a crash: idle (black), loading (spinner), playing
-      // (picture). Anything else has to be told apart deliberately.
+      // indistinguishable from a crash: loading (spinner), playing (picture),
+      // and the collapsed state above.
       function showIdle() {
         clearLoadTimer();
         stageMsg.classList.add('hidden-el');
@@ -471,8 +454,9 @@
           // arrives.
           engine.on('state', function (st) {
             if (!st) return;
-            if (st.stage === 'idle') showIdle();
-            else if (st.drawn > 0) showIdle();
+            // Idle means the engine was closed, so there is nothing to show.
+            if (st.stage === 'idle') { setStageUp(false); return; }
+            if (st.drawn > 0) showIdle();
           });
           // Exposed so the picture and the audio chain can be inspected from the
           // console, and so the test suite can read real state rather than
@@ -516,21 +500,25 @@
         }
         driveToggle.classList.toggle('on', DRIVE.on);
         driveToggle.setAttribute('aria-pressed', DRIVE.on ? 'true' : 'false');
-        driveLabel.textContent = DRIVE.on ? 'InMotion on' : 'InMotion';
-        // The STAGE is what is shown, not the bare canvas: it stays on screen
-        // whenever the mode is on, so at rest you see a black player rather than
-        // a gap where a player ought to be.
-        stage.classList.toggle('on', DRIVE.on);
-        stage.classList.toggle('hidden-el', !DRIVE.on);
+        // The label does not change with the state: the pill is green with a
+        // glowing dot when on and grey when off, which is a clearer signal than
+        // a word that has to be read. aria-pressed still carries the state for
+        // anything that cannot see the colour.
+        driveLabel.textContent = 'InMotion';
         document.getElementById('myPlayer').classList.toggle('hidden-el', DRIVE.on);
         // Switching modes mid-playback: stop whichever one is running so the
         // two never fight over the audio device. Leaving InMotion mode tears the
         // whole engine down, audio chain included.
         if (DRIVE.on) {
           try { player.pause(); } catch (e) {}
-          if (!currentChannel) showIdle();
+          // Turning the mode on does not by itself bring the picture up: nothing
+          // is playing until a channel is tapped.
+          setStageUp(!!currentChannel);
         } else if (engine) {
+          setStageUp(false);
           engine.destroy(); engine = null; window.__eng = null; libsLoading = null;
+        } else {
+          setStageUp(false);
         }
       }
 
@@ -545,6 +533,9 @@
       // quietly falling through to video.js put the picture into a hidden
       // element: audio, no image, and a black canvas.
       function startDrive(channel) {
+        // Bring the stage up at the same moment as the spinner, so the loading
+        // state is never rendered into a hidden box.
+        setStageUp(true);
         showLoading();
         ensureEngine().then(function () {
           // The toggle may have been flipped back while we were loading.
@@ -577,14 +568,23 @@
       // black box with no way to dismiss it is worse than no picture at all.
       function stopPlayback() {
         if (engine) engine.close();
-        try { player.pause(); player.src(""); } catch (e) {}
+        // Only clear the source if one is actually loaded. Setting src to ""
+        // on an element that never had a source makes video.js log
+        // MEDIA_ERR_SRC_NOT_SUPPORTED for no reason, and in InMotion mode the
+        // normal player is usually empty anyway.
+        try {
+          player.pause();
+          var el = document.getElementById('myPlayer');
+          if (el && el.currentSrc) player.src("");
+        } catch (e) {}
         var video = document.getElementById('myPlayer');
         video.style.display = "none";
         video.classList.remove('vjs-fluid');
-        document.getElementById('liveBadge').style.display = 'none';
         currentChannel = null;
         if (selected) { selected.classList.remove('selected'); selected = null; }
-        // Back to idle: a black stage, no spinner.
+        // Collapse the stage: with nothing playing there is nothing to show, and
+        // an empty black box above the grid just pushes the channels off screen.
+        setStageUp(false);
         showIdle();
         if (canvas.getContext) {
           try {
@@ -641,7 +641,6 @@
 
       function loadChannel(channel) {
         var video = document.getElementById("myPlayer");
-        document.getElementById("liveBadge").style.display = "inline-block";
         window.scrollTo({ top: 0, behavior: 'smooth' });
         currentChannel = channel;
         // Gate on the mode the user asked for, NOT on whether the engine happens
