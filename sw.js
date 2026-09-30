@@ -5,7 +5,7 @@
 // stops playback, and the stage gains a loading state. This worker caches
 // navigations, so without the bump a returning visitor keeps the previous
 // page and every one of those changes looks like it did not deploy.
-const CACHE_NAME = 'starlite-logos-v5';
+const CACHE_NAME = 'starlite-logos-v6';
 
 self.addEventListener('install', event => {
   self.skipWaiting();

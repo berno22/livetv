@@ -144,22 +144,60 @@
         align-items: center;
         justify-content: center;
         gap: 16px;
-        color: #fff;
-        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        color: rgba(255, 255, 255, 0.72);
+        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         letter-spacing: 3px;
         text-transform: uppercase;
         pointer-events: none;
       }
       #stageMsg .spin {
-        width: 34px;
-        height: 34px;
-        border: 2px solid rgba(255, 255, 255, 0.25);
-        border-top-color: var(--go);
+        position: relative;
+        width: 46px;
+        height: 46px;
         border-radius: 50%;
-        animation: spin 0.9s linear infinite;
+        /* A single arc that fades in as it goes round, drawn as a conic gradient
+           and masked down to a hairline ring. Thinner and quieter than a
+           bordered circle, and in the same green as the toggle so the loading
+           state looks like it belongs to this page rather than bolted on. */
+        background: conic-gradient(from 0deg,
+          rgba(18, 161, 80, 0) 0deg,
+          rgba(18, 161, 80, 0.35) 130deg,
+          rgba(18, 161, 80, 0.85) 250deg,
+          var(--go) 360deg);
+        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+        mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+        animation: spin 0.85s linear infinite;
+      }
+      /* A second, slower ring turning the other way, so the motion reads as
+         deliberate rather than as one shape being rotated. Barely there - the
+         point is to show something is happening, not to perform. */
+      #stageMsg .spin::after {
+        content: "";
+        position: absolute;
+        inset: 6px;
+        border-radius: 50%;
+        background: conic-gradient(from 180deg,
+          rgba(18, 161, 80, 0) 0deg,
+          rgba(18, 161, 80, 0.5) 300deg,
+          rgba(18, 161, 80, 0.12) 360deg);
+        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1px), #000 calc(100% - 1px));
+        mask: radial-gradient(farthest-side, transparent calc(100% - 1px), #000 calc(100% - 1px));
+        animation: spinBack 1.6s linear infinite;
       }
       @keyframes spin {
         to { transform: rotate(360deg); }
+      }
+      @keyframes spinBack {
+        to { transform: rotate(-360deg); }
+      }
+      /* Respect a stated preference for less motion: hold the arcs still rather
+         than removing them, since the ring is also the thing saying "working". */
+      @media (prefers-reduced-motion: reduce) {
+        #stageMsg .spin,
+        #stageMsg .spin::after,
+        #stage.on {
+          animation: none !important;
+        }
       }
 
       /* The Channels heading doubles as the stop control. No visible label for
@@ -454,8 +492,13 @@
           // arrives.
           engine.on('state', function (st) {
             if (!st) return;
-            // Idle means the engine was closed, so there is nothing to show.
-            if (st.stage === 'idle') { setStageUp(false); return; }
+            // 'idle' here does NOT mean the page stopped. engine.open() closes
+            // the previous stream internally, so every channel change arrives
+            // as an idle state while the new one is still starting. Collapsing
+            // the stage on it hid the picture during the switch - the audio kept
+            // going, because the engine was working fine - and left a black box
+            // that only a manual stop cleared. Only an explicit stop collapses
+            // the stage, so only an explicit stop hides it.
             if (st.drawn > 0) showIdle();
           });
           // Exposed so the picture and the audio chain can be inspected from the
