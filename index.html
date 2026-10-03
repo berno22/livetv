@@ -18,6 +18,9 @@
            colour and means "recording"; a red Drive toggle read as a second
            live indicator rather than a mode. */
         --go: #12a150;
+        /* The loading ink. The spinner ring and the "Loading" label are the same
+           colour, so it is declared once here and they cannot drift apart. */
+        --load: rgba(255, 255, 255, 0.72);
       }
       * {
         margin: 0;
@@ -143,29 +146,35 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        gap: 16px;
-        color: rgba(255, 255, 255, 0.72);
-        font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-        letter-spacing: 3px;
+        gap: 22px;
+        color: var(--load);
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        /* After the font shorthand, which would otherwise reset it. */
+        font-weight: 600;
+        letter-spacing: 4px;
         text-transform: uppercase;
         pointer-events: none;
       }
       #stageMsg .spin {
         position: relative;
-        width: 46px;
-        height: 46px;
+        /* Sized to be read at a glance from the driver's seat, which is the
+           whole point of this state: a ring too small to notice at a glance is
+           indistinguishable from black. */
+        width: 96px;
+        height: 96px;
         border-radius: 50%;
         /* A single arc that fades in as it goes round, drawn as a conic gradient
-           and masked down to a hairline ring. Thinner and quieter than a
-           bordered circle, and in the same green as the toggle so the loading
-           state looks like it belongs to this page rather than bolted on. */
+           and masked down to a thin ring. Thinner and quieter than a bordered
+           circle. It is in the same ink as the Loading label, not the toggle
+           green: the ring and the word are one message, so the bright head of
+           the arc lands exactly on the label's own colour. */
         background: conic-gradient(from 0deg,
-          rgba(18, 161, 80, 0) 0deg,
-          rgba(18, 161, 80, 0.35) 130deg,
-          rgba(18, 161, 80, 0.85) 250deg,
-          var(--go) 360deg);
-        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
-        mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+          rgba(255, 255, 255, 0) 0deg,
+          rgba(255, 255, 255, 0.25) 130deg,
+          rgba(255, 255, 255, 0.6) 250deg,
+          var(--load) 360deg);
+        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+        mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
         animation: spin 0.85s linear infinite;
       }
       /* A second, slower ring turning the other way, so the motion reads as
@@ -174,14 +183,14 @@
       #stageMsg .spin::after {
         content: "";
         position: absolute;
-        inset: 6px;
+        inset: 12px;
         border-radius: 50%;
         background: conic-gradient(from 180deg,
-          rgba(18, 161, 80, 0) 0deg,
-          rgba(18, 161, 80, 0.5) 300deg,
-          rgba(18, 161, 80, 0.12) 360deg);
-        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 1px), #000 calc(100% - 1px));
-        mask: radial-gradient(farthest-side, transparent calc(100% - 1px), #000 calc(100% - 1px));
+          rgba(255, 255, 255, 0) 0deg,
+          rgba(255, 255, 255, 0.36) 300deg,
+          rgba(255, 255, 255, 0.09) 360deg);
+        -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
+        mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px));
         animation: spinBack 1.6s linear infinite;
       }
       @keyframes spin {
@@ -248,6 +257,101 @@
       #driveToggle.on .dot {
         background: var(--go);
         box-shadow: 0 0 8px var(--go);
+      }
+
+      /* Wide and Mute, immediately right of InMotion, so the header reads as
+         one row of controls rather than a link and two stray buttons. They
+         borrow its pill shape for the same reason. Wide comes first because it
+         is a mode like InMotion; Mute is a one-touch action and sits last.
+
+         Neither turns green: --go means "InMotion is on" and nothing else, so
+         an active Mute or Wide is drawn in ink. Two green pills in a row would
+         stop saying which control is the mode. */
+      #muteToggle,
+      #wideToggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: transparent;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 7px 12px;
+        font: inherit;
+        font-size: 12px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: var(--muted);
+        cursor: pointer;
+        transition: color 0.2s, border-color 0.2s, background 0.2s;
+      }
+      #wideToggle {
+        padding: 7px 14px 7px 10px;
+      }
+      #muteToggle:hover,
+      #wideToggle:hover {
+        color: var(--text);
+        border-color: var(--text);
+      }
+      #muteToggle svg {
+        display: block;
+        width: 16px;
+        height: 16px;
+      }
+      /* The icon is the whole label, so a state change swaps the glyph rather
+         than the word. The speaker stays put and the waves are replaced by a
+         cross in the same 24x24 box, so the button does not shift. */
+      #muteToggle .cross { display: none; }
+      #muteToggle.on .waves { display: none; }
+      #muteToggle.on .cross { display: block; }
+      #muteToggle.on,
+      #wideToggle.on {
+        color: var(--text);
+        border-color: var(--text);
+        background: rgba(26, 26, 26, 0.06);
+      }
+      /* Wide keeps a dot like InMotion, in ink rather than green. */
+      #wideToggle .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--line);
+        transition: background 0.2s;
+      }
+      #wideToggle.on .dot {
+        background: var(--text);
+      }
+
+      /* Wide. The picture is pulled out of the padded, max-width column it
+         normally sits in and stretched edge to edge across the viewport.
+
+         Done by widening the column and giving the grid its old 1200px back,
+         rather than by pulling the player out with 100vw and a negative
+         margin. 100vw includes the scrollbar, which would put a horizontal
+         scrollbar on the page for the sake of a few pixels the picture does
+         not need. Everything below uses 100%, so it is measured against the
+         body, which is already scrollbar-safe.
+
+         The Channels heading is deliberately NOT in this list. It is centred
+         in the column, and the column stays centred in the viewport, so it
+         lands in the same place either way; giving it the padding back would
+         only left-align it. */
+      body.wide main {
+        max-width: none;
+        padding-left: 0;
+        padding-right: 0;
+      }
+      body.wide #channelGrid {
+        width: 100%;
+        max-width: 1200px;
+        padding-left: 40px;
+        padding-right: 40px;
+        box-sizing: border-box;
+      }
+      body.wide #myPlayer,
+      body.wide #stage {
+        max-width: none;
+        border-radius: 0;
       }
 
       /* A short-lived note, used for the "this channel can't use InMotion"
@@ -335,6 +439,25 @@
                 title="InMotion mode: decode with WebCodecs and draw to a canvas, so playback keeps running while the car is in Drive">
           <span class="dot"></span><span id="driveLabel">InMotion</span>
         </button>
+        <button id="wideToggle" type="button" aria-pressed="false"
+                title="Wide: stretch the picture from edge to edge across the screen">
+          <span class="dot"></span><span>Wide</span>
+        </button>
+        <!-- Mute is icon-only, so it carries aria-label and title instead of a
+             visible word. Both are rewritten with the state. It sits to the
+             right of Wide so the worded control is not split away from the
+             mode pill by the icon. -->
+        <button id="muteToggle" type="button" aria-pressed="false"
+                aria-label="Mute sound" title="Mute sound">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true" focusable="false">
+            <path d="M11 5 6 9H3v6h3l5 4z" fill="currentColor" stroke="none"/>
+            <path class="waves" d="M15.5 8.6a5 5 0 0 1 0 6.8"/>
+            <path class="waves" d="M18.2 6a8.6 8.6 0 0 1 0 12"/>
+            <path class="cross" d="m16.6 9.4 5 5M21.6 9.4l-5 5"/>
+          </svg>
+        </button>
       </div>
       <!-- The red LIVE badge used to live here. It only ever said "a stream is
            running", which the picture already says, and it was the one red
@@ -379,6 +502,8 @@
       var stageMsgText = document.getElementById('stageMsgText');
       var driveToggle = document.getElementById('driveToggle');
       var driveLabel = document.getElementById('driveLabel');
+      var muteToggle = document.getElementById('muteToggle');
+      var wideToggle = document.getElementById('wideToggle');
       var noteEl = document.getElementById('note');
 
       // =====================================================================
@@ -420,6 +545,70 @@
       var currentChannel = null;
       var noteTimer = 0;
       var loadTimer = 0;
+
+      // =====================================================================
+      // Mute and Wide
+      //
+      // Two page-level flags, not engine state. The engine is destroyed
+      // whenever InMotion is switched off, so a flag kept on it would be lost
+      // across that switch and the next engine would come back unmuted while
+      // the button still showed as muted.
+      //
+      // Both are remembered like the InMotion choice, so the page comes back
+      // the way it was left. ?wide= and ?mute= force either one for a test
+      // without touching storage.
+      // =====================================================================
+      function prefFlag(name, key, dflt) {
+        var v = Q.get(name);
+        if (v === '1') return true;
+        if (v === '0') return false;
+        var stored = null;
+        try { stored = localStorage.getItem(key); } catch (e) {}
+        if (stored === null) return dflt;
+        return stored === '1';
+      }
+      var WIDE = prefFlag('wide', 'livetv.wide', false);
+      var MUTED = prefFlag('mute', 'livetv.mute', false);
+
+      // Pushes the current flags at everything that renders them: the two
+      // buttons, the video.js element and, if one exists, the engine. Idempotent
+      // on purpose, so it is safe to call after any change and after the engine
+      // is rebuilt.
+      function applyMute() {
+        muteToggle.classList.toggle('on', MUTED);
+        muteToggle.setAttribute('aria-pressed', MUTED ? 'true' : 'false');
+        // The icon shows what the button will do, so the label has to follow it
+        // rather than name the state.
+        var label = MUTED ? 'Unmute sound' : 'Mute sound';
+        muteToggle.setAttribute('aria-label', label);
+        muteToggle.title = label;
+        try { player.muted(MUTED); } catch (e) {}
+        if (engine) engine.setMuted(MUTED);
+      }
+      function setMute(on, skipPersist) {
+        MUTED = !!on;
+        if (!skipPersist) {
+          try { localStorage.setItem('livetv.mute', MUTED ? '1' : '0'); } catch (e) {}
+        }
+        applyMute();
+      }
+      function setWide(on, skipPersist) {
+        WIDE = !!on;
+        if (!skipPersist) {
+          try { localStorage.setItem('livetv.wide', WIDE ? '1' : '0'); } catch (e) {}
+        }
+        document.body.classList.toggle('wide', WIDE);
+        wideToggle.classList.toggle('on', WIDE);
+        wideToggle.setAttribute('aria-pressed', WIDE ? 'true' : 'false');
+      }
+      muteToggle.addEventListener('click', function () { setMute(!MUTED); });
+      wideToggle.addEventListener('click', function () { setWide(!WIDE); });
+      // video.js has its own mute button in the control bar. Mirror it here so
+      // the two never disagree about which state sound is in.
+      player.on('volumechange', function () {
+        var m = player.muted();
+        if (m !== MUTED) setMute(m);
+      });
 
       // The stage is only on screen when there is something to put in it. An
       // empty black rectangle above the channel grid said nothing and took up
@@ -483,7 +672,7 @@
             return p.then(function () { return loadScript(src); });
           }, Promise.resolve());
         }).then(function () {
-          engine = new TeslaPlayer({ canvas: canvas, gain: DRIVE.gain, maxWidth: DRIVE.maxw });
+          engine = new TeslaPlayer({ canvas: canvas, gain: DRIVE.gain, maxWidth: DRIVE.maxw, muted: MUTED });
           engine.on('note', showNote);
           engine.on('fail', onEngineFail);
           // Clear the loading state on the first painted frame, not on a timer.
@@ -750,6 +939,8 @@
       // actually used, so a returning Drive-mode visitor sees the canvas and
       // the toggle lit, and nothing is downloaded until they pick a channel.
       setDrive(DRIVE.on, true);
+      setWide(WIDE, true);
+      setMute(MUTED, true);
 
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js');

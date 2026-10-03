@@ -5,7 +5,9 @@
 // stops playback, and the stage gains a loading state. This worker caches
 // navigations, so without the bump a returning visitor keeps the previous
 // page and every one of those changes looks like it did not deploy.
-const CACHE_NAME = 'starlite-logos-v6';
+// v7: Mute and Wide added to the header, the loading indicator enlarged, and
+// InMotion audio locked to the picture. Same reason as above.
+const CACHE_NAME = 'starlite-logos-v7';
 
 self.addEventListener('install', event => {
   self.skipWaiting();

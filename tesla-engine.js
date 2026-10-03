@@ -50,6 +50,14 @@
   // listener hearing a gap.
   var BUFFER_TARGET_S = 12;
 
+  // How far ahead of its due time audio is decoded and poured into the ring.
+  // A ring holding exactly this much is playing the same media instant the
+  // picture is showing - the decode lead and the buffered depth cancel each
+  // other - so this is both the feed horizon and the target the sync trim
+  // steers to. It and AUDIO_LEAD_S must stay in step.
+  var AUDIO_LEAD_MS = 1500;
+  var AUDIO_LEAD_S = AUDIO_LEAD_MS / 1000;
+
   var has = function (k) { return typeof global[k] !== 'undefined'; };
 
   function missingLibs(needAudio) {
@@ -91,12 +99,17 @@
     // keeps the two clocks in step.
     '    this.srcRate = p.sourceRate || sampleRate;',
     '    this.step = this.srcRate / sampleRate;',
+    // A trim of 1 reads at the stream's own rate. The main thread nudges it a
+    // fraction of a percent either way to hold the ring at the depth that
+    // keeps the sound level with the picture; see trimAudio().
+    '    this.trim = 1;',
     '    this.port.onmessage = (e) => {',
     '      const d = e.data;',
     // Switching channels must not play out the tail of the previous one, so the
     // ring is emptied on a switch. fed resets too, so the underrun counter
     // measures the new channel rather than inheriting the old one's.
     '      if (d && d.flush) { this.w = 0; this.r = 0; this.avail = 0; this.pos = 0; this.fed = false; return; }',
+    '      if (d && d.trim) { this.trim = d.trim; return; }',
     // A new channel may arrive at a different rate. Re-step and empty, because
     // the existing contents are in the old rate's timeline.
     '      if (d && d.rate) {',
@@ -133,6 +146,7 @@
     // pointer inside the per-channel loop consumed 2 samples per output frame on
     // a stereo stream, so the ring drained at exactly double rate, always ran
     // dry, and gave the right channel the wrong samples.
+    '    const st = this.step * this.trim;',
     '    for (let i = 0; i < n; i++) {',
     '      let l = 0, r = 0;',
     '      if (this.avail >= 1) {',
@@ -144,8 +158,8 @@
     '          l = L[a0] + (L[a1] - L[a0]) * f;',
     '          r = R[a0] + (R[a1] - R[a0]) * f;',
     '        } else { l = L[a0]; r = R[a0]; }',
-    '        this.pos += this.step;',
-    '        this.avail -= this.step;',
+    '        this.pos += st;',
+    '        this.avail -= st;',
     '      } else { starved = true; }',
     '      out[0][i] = l;',
     '      if (out.length > 1) out[1][i] = r;',
@@ -221,13 +235,17 @@
     // canvas repainted at 60fps is a lot of paint for a car display.
     this.maxW = this.opts.maxWidth || 1280;
     this.gainValue = this.opts.gain || 4;
+    // Remembered rather than applied here. The gain node does not exist until
+    // the audio graph is built on the first gesture, and a channel opened while
+    // muted must not start audible just because finish() ran later.
+    this.muted = !!this.opts.muted;
     this.gen = 0;          // bumped by close(); every async callback checks it
     this.live = null;      // the running stream, or null
     this.actx = null;      // AudioContext, kept across channels
     this.activated = false; // has a user gesture happened yet
     // The audio output chain, built once and shared by every channel.
     this.audio = { ready: false, pending: null, node: null, push: null, flush: null,
-                   setRate: null, rate: 0, sourceRate: 0,
+                   setRate: null, setTrim: null, rate: 0, sourceRate: 0, trim: 1,
                    path: '', modErr: '', depth: 0, rms: 0, underruns: 0,
                    gain: null, limiter: null, analyser: null, buf: null };
     this.listeners = {};
@@ -325,6 +343,10 @@
       // counters
       drawn: 0, drops: 0, segsFetched: 0, samples: 0, frames: 0,
       aFrames: 0, aSeconds: 0, aUnderruns: 0, aQueue: 0, aRms: 0,
+      // A/V sync: aPrimed marks the one-time drop of already-due audio when
+      // joining live, aDepth is the smoothed ring depth the trim is computed
+      // from, and aTrim is the correction last sent to the ring.
+      aPrimed: false, aDepth: 0, aTrim: 1, lastTrimAt: 0,
       codec: '-', width: 0, height: 0, srcRate: 0,
       decFps: 0, paintFps: 0, lastDecT: 0, lastPaintT: 0,
       gaps: [], lastGapAt: 0, buffered: 0
@@ -624,6 +646,8 @@
       };
       a.push = function (planes) { a.node.port.postMessage(planes); };
       a.setRate = function (r) { a.node.port.postMessage({ rate: r }); };
+      // 1 = the stream's own rate; the sync loop nudges it either side.
+      a.setTrim = function (x) { a.node.port.postMessage({ trim: x }); };
       finish(a.node);
       a.path = 'AudioWorklet';
     }
@@ -637,10 +661,11 @@
         var sp = ctx.createScriptProcessor(2048, 1, 2);
         var cap = Math.max(48000 * 8, ctx.sampleRate * 8);
         var ch = [new Float32Array(cap), new Float32Array(cap)];
-        var st = { w: 0, pos: 0, avail: 0, fed: false, under: 0, srcRate: a.sourceRate || ctx.sampleRate };
+        var st = { w: 0, pos: 0, avail: 0, fed: false, under: 0, trim: 1, srcRate: a.sourceRate || ctx.sampleRate };
         st.step = st.srcRate / ctx.sampleRate;
         sp.onaudioprocess = function (ev) {
           var out = ev.outputBuffer, n = out.length, starved = false;
+          var stp = st.step * st.trim;
           for (var i = 0; i < n; i++) {
             var l = 0, rr = 0;
             if (st.avail >= 1) {
@@ -650,7 +675,7 @@
                 l = ch[0][a0] + (ch[0][a1] - ch[0][a0]) * f;
                 rr = ch[1][a0] + (ch[1][a1] - ch[1][a0]) * f;
               } else { l = ch[0][a0]; rr = ch[1][a0]; }
-              st.pos += st.step; st.avail -= st.step;
+              st.pos += stp; st.avail -= stp;
             } else starved = true;
             out.getChannelData(0)[i] = l;
             if (out.numberOfChannels > 1) out.getChannelData(1)[i] = rr;
@@ -677,6 +702,7 @@
           st.srcRate = r; st.step = r / ctx.sampleRate;
           st.w = 0; st.pos = 0; st.avail = 0; st.fed = false;
         };
+        a.setTrim = function (x) { st.trim = x; };
         a.flush = function () { st.w = 0; st.pos = 0; st.avail = 0; st.fed = false; };
         a.node = sp;
         finish(sp);
@@ -695,7 +721,7 @@
       // The limiter is what stops peaks that were already near -10dB from
       // clipping once they are amplified.
       var g = ctx.createGain();
-      g.gain.value = self.gainValue;
+      g.gain.value = self.muted ? 0 : self.gainValue;
       var lim = ctx.createDynamicsCompressor();
       lim.threshold.value = -6; lim.knee.value = 6; lim.ratio.value = 12;
       lim.attack.value = 0.003; lim.release.value = 0.25;
@@ -720,6 +746,78 @@
     if (a.setRate) a.setRate(r);
   };
 
+  // Mute by zeroing the gain node the volume already runs through, rather than
+  // by tearing the audio graph down. Two reasons: the picture must keep
+  // running while muted, and the ring keeps filling, so unmuting is instant
+  // instead of starting again on a starved buffer.
+  TeslaPlayer.prototype.setMuted = function (on) {
+    this.muted = !!on;
+    var a = this.audio;
+    if (a.gain && this.actx) {
+      var target = this.muted ? 0 : this.gainValue;
+      try {
+        var t = this.actx.currentTime;
+        // Ramped, not stepped: snapping the gain to zero clicks on anything
+        // with content above the noise floor.
+        a.gain.gain.cancelScheduledValues(t);
+        a.gain.gain.setValueAtTime(a.gain.gain.value, t);
+        a.gain.gain.linearRampToValueAtTime(target, t + 0.04);
+      } catch (e) {
+        a.gain.gain.value = target;
+      }
+    }
+    return this.muted;
+  };
+
+  // ---- audio/video sync ---------------------------------------------------
+  // Audio is decoded AUDIO_LEAD_S ahead of its due time and poured into a ring
+  // the device drains; the picture is painted against the system clock at each
+  // frame's due time. The two agree only when the ring holds exactly the decode
+  // lead, because the lead and the buffered depth cancel each other - so the
+  // depth of the ring IS the sync error, and it is the one number this needs.
+  //
+  // Any drift between the audio device's clock and the system clock (there is
+  // always some) pushes the depth off that target and slides the sound against
+  // the picture. The correction is to resample the ring read by a fraction of
+  // a percent: faster when the ring is too deep, slower when it is too shallow.
+  // That is inaudible where dropping or repeating samples to catch up clicks,
+  // and unlike moving the video clock it does not need to know which of the two
+  // clocks is the correct one.
+  var TRIM_MAX = 0.02;       // never shift pitch by more than 2%
+  // A proportional gain, sized so a realistic clock error asks for a tiny
+  // correction. 0.25 leaves a 20ms residual for an extreme 0.5% clock error
+  // and well under 2ms for the 50-200ppm an ordinary device shows, which is
+  // far below the ~40ms where a lip-sync offset starts to be visible. It is
+  // also far enough from the 400ms resend interval to keep the loop stable.
+  var TRIM_GAIN = 0.25;
+  var TRIM_DEADBAND = 0.0005;
+
+  TeslaPlayer.prototype.trimAudio = function (s, now) {
+    var a = this.audio;
+    if (!a.ready || !a.setTrim) return;
+    // Smooth the depth before treating it as an error: the worklet reports it
+    // once per process block and the decoder delivers in bursts, so a single
+    // reading is noise. Seeded from the first non-zero reading because a ring
+    // that is still filling is legitimately empty, not "audio is early".
+    s.aDepth = s.aDepth ? s.aDepth * 0.85 + a.depth * 0.15 : a.depth;
+    var f = (s.aDepth - AUDIO_LEAD_S) * TRIM_GAIN;
+    if (f > TRIM_MAX) f = TRIM_MAX; else if (f < -TRIM_MAX) f = -TRIM_MAX;
+    if (Math.abs(f) < TRIM_DEADBAND) f = 0;
+    this.setAudioTrim(s, 1 + f, now);
+  };
+
+  // Sending on every 10ms tick would flood the audio thread for no gain - the
+  // ring moves far slower than that. Send only when the correction has moved
+  // enough to matter, and at most a few times a second otherwise.
+  TeslaPlayer.prototype.setAudioTrim = function (s, trim, now) {
+    if (s.aTrim === trim) return;
+    if (now - (s.lastTrimAt || 0) < 400 && Math.abs(trim - s.aTrim) < 0.002) return;
+    s.aTrim = trim;
+    s.lastTrimAt = now;
+    this.audio.trim = trim;
+    try { this.audio.setTrim(trim); } catch (e) {}
+  };
+
   // Drop whatever the previous channel left in the ring, so a switch does not
   // play out the tail of the old one.
   TeslaPlayer.prototype.flushAudio = function () {
@@ -727,6 +825,11 @@
     if (a.flush) a.flush();
     else if (a.node && a.node.port) { try { a.node.port.postMessage({ flush: 1 }); } catch (e) {} }
     a.underruns = 0; a.depth = 0;
+    // Sound the next channel at its own rate. A trim left over from the last
+    // one would be invisible to the new stream (its sync state starts at 1)
+    // and would run the ring off-cadence until the loop noticed.
+    a.trim = 1;
+    if (a.setTrim) { try { a.setTrim(1); } catch (e) {} }
   };
 
   TeslaPlayer.prototype.queueAudio = function (s, data) {
@@ -776,7 +879,10 @@
         // runs the scheduler far ahead of the audio clock and stutters.
         var as = (s.aTrack.timescale || 48000);
         var asec = sm.cts / as;
-        s.aPend.push({ sync: sync, ts: Math.round(asec * 1e6), due: s.vT0 >= 0 ? s.vT0 + asec * 1000 : 0, raw: raw });
+        // No due time yet: vT0 may not exist if this track was demuxed before
+        // the first video sample. feedDecoders() computes it against whichever
+        // anchor exists by the time the sample is released.
+        s.aPend.push({ sync: sync, ts: Math.round(asec * 1e6), raw: raw });
       }
     }
     // Cap each queue at the WORST-CASE buffer, not the target. Fetching happens
@@ -811,16 +917,32 @@
     // Audio is released further ahead of its due time than video, because a ring
     // buffer only smooths jitter if it actually holds a cushion. Releasing it
     // just before it is due leaves the ring at zero and turns every hiccup into
-    // a dropout.
-    if (s.adec && s.adec.state === 'configured') {
-      while (s.aPend.length && s.aPend[0].due && s.aPend[0].due < now - 500) { s.aPend.shift(); s.drops++; }
-      while (s.aPend.length && s.aPend[0].due - now < 1500) {
+    // a dropout. The cushion is what the sync trim below holds steady.
+    //
+    // Nothing is fed until the first video sample has anchored the shared media
+    // clock. Before that vT0 is -1 and an audio due time is meaningless: every
+    // queued sample would test as due at once, the whole queue would be dumped
+    // into the ring, and the sound would sit seconds behind the picture for the
+    // rest of the stream. The due time is worked out here, at release, rather
+    // than when the sample was queued, because audio can be demuxed before the
+    // anchor exists.
+    if (s.adec && s.adec.state === 'configured' && s.vT0 >= 0) {
+      // The first release of a stream drops what is already due. Joining live
+      // means the head of the queue is in the past, and playing it would start
+      // the ring deeper than the lead - the exact offset this is here to avoid.
+      if (!s.aPrimed && s.aPend.length) {
+        while (s.aPend.length && (s.vT0 + s.aPend[0].ts / 1000) <= now) { s.aPend.shift(); s.drops++; }
+        s.aPrimed = true;
+      }
+      while (s.aPend.length && (s.vT0 + s.aPend[0].ts / 1000) < now - 500) { s.aPend.shift(); s.drops++; }
+      while (s.aPend.length && (s.vT0 + s.aPend[0].ts / 1000) - now < AUDIO_LEAD_MS) {
         if (s.adec.decodeQueueSize > 40) break;
         var a = s.aPend.shift();
         try {
           s.adec.decode(new EncodedAudioChunk({ type: a.sync ? 'key' : 'delta', timestamp: a.ts, data: a.raw }));
         } catch (e) {}
       }
+      this.trimAudio(s, now);
     }
   };
 
@@ -1020,7 +1142,7 @@
     if (this.actx) { try { this.actx.close(); } catch (e) {} }
     this.actx = null;
     this.audio = { ready: false, pending: null, node: null, push: null, flush: null,
-                   setRate: null, rate: 0, sourceRate: 0,
+                   setRate: null, setTrim: null, rate: 0, sourceRate: 0, trim: 1,
                    path: '', modErr: '', depth: 0, rms: 0, underruns: 0,
                    gain: null, limiter: null, analyser: null, buf: null };
   };
@@ -1043,9 +1165,15 @@
       srcRate: s.srcRate, srcCh: s.srcCh || 2, fps: s.frameIv ? (1000 / s.frameIv) : 0,
       drawn: s.drawn, drops: s.drops, segs: s.segsFetched,
       audioPath: this.audio.path, modErr: this.audio.modErr,
+      muted: this.muted,
       ctxState: this.actx ? this.actx.state : 'none',
       aFrames: s.aFrames, aSeconds: s.aSeconds, aUnder: this.audio.underruns,
       aQueue: this.audio.depth, aRms: this.audio.rms,
+      // aDrift is the sound's position against the picture: positive means the
+      // audio is ahead, negative behind, zero in sync. aTrim is the resample
+      // correction being applied to hold it there.
+      aDrift: this.audio.depth ? (AUDIO_LEAD_S - this.audio.depth) : 0,
+      aTrim: s.aTrim || 1,
       outRms: this.outRms(),
       buffered: bufferedOf(s),
       fatal: s.fatal, fetchErr: s.fetchErr, aErr: s.aErr || '',
