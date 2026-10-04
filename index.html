@@ -81,6 +81,14 @@
         align-items: center;
       }
 
+      /* Both picture surfaces share this box, so the banner over them lines up with
+         whichever is showing, and the WIDE toggle only has to move one element. */
+      #frame {
+        position: relative;
+        width: 100%;
+        max-width: 1120px;
+        margin-bottom: 48px;
+      }
       #myPlayer {
         display: none;
         width: 100%;
@@ -89,7 +97,6 @@
         background: #000;
         border-radius: 12px;
         overflow: hidden;
-        margin-bottom: 48px;
       }
       #myPlayer.vjs-fluid {
         display: block;
@@ -111,8 +118,134 @@
       #myPlayer.hidden-el,
       #myCanvas.hidden-el,
       #stage.hidden-el,
-      #stageMsg.hidden-el {
+      #stageMsg.hidden-el,
+      #epgBar.hidden-el {
         display: none !important;
+      }
+      /* ---- What's on / what's next -----------------------------------------
+         A banner across the top of the frame. Sized to be read at a glance
+         from the driver's seat. It carries its own ink rather than assuming
+         one: over live video there is no background to promise contrast.
+
+         The plate fades to NOTHING at its lower edge, so there is no line where
+         the banner ends and the picture begins. A banner that stops at a fixed
+         opacity puts a hard horizontal edge across live video, and the eye reads
+         that as a band rather than as an overlay. Fading all the way out makes
+         the type look like it is coming out of the picture instead. */
+      #epgBar {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 0 26px;
+        /* Rounded only at the top, to follow the frame underneath. A full radius
+           would leave the bottom corners floating over the picture. WIDE drops
+           the frames' radius, so it drops this one too. */
+        border-radius: 12px 12px 0 0;
+        /* A quarter of the frame. Big enough that the guide reads as part of the
+           picture's furniture rather than a strip of text stuck to the edge. */
+        height: 25%;
+        /* Dark enough under the type to be certain of contrast on any frame,
+           then a long fade: most of the height is spent getting to nothing, so
+           the transition is gradual rather than a cliff. */
+        background: linear-gradient(to bottom,
+                                    rgba(0, 0, 0, 0.94) 0%,
+                                    rgba(0, 0, 0, 0.9) 38%,
+                                    rgba(0, 0, 0, 0.72) 58%,
+                                    rgba(0, 0, 0, 0.44) 76%,
+                                    rgba(0, 0, 0, 0.18) 90%,
+                                    rgba(0, 0, 0, 0) 100%);
+        color: #fff;
+        /* Sized to be read at a glance from the driver's seat, which is what the
+           whole banner is for. */
+        font: 400 27px/1.28 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        /* Taps belong to the player underneath. */
+        pointer-events: none;
+        /* The banner is a greeting, not furniture: it arrives when a channel
+           does, holds long enough to be read, and then gets out of the way of
+           the picture. A tap on the frame brings it back. */
+        opacity: 1;
+        transition: opacity 0.45s ease;
+      }
+      #epgBar.gone {
+        opacity: 0;
+      }
+      #epgBar .epgInfo {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        min-width: 0;
+      }
+      #epgBar .epgLine {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        min-width: 0;
+      }
+      /* The lead-in is quieter than the value: the programme is the information,
+         "now playing" only says what kind of information it is. A fixed lead-in
+         width lines the two values up on one left edge. The countdown is styled
+         as a lead-in too, so "next in 35min" sits in the same column as "now
+         playing" and both titles start at the same x. */
+      #epgBar b,
+      #epgBar i {
+        flex: 0 0 auto;
+        min-width: 148px;
+        font-size: 15px;
+        font-style: normal;
+        /* The "now playing" lead-in is heavier than the countdown beside it: it
+           labels the primary line, and the two are not the same kind of
+           information. */
+        font-weight: 700;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.62);
+      }
+      /* The countdown keeps the banner's own weight. It updates every 30 seconds, and
+         a number that changes while set heavier than its label draws the eye to
+         the wrong line. */
+      #epgBar i {
+        text-transform: none;
+        letter-spacing: 2.6px;
+        font-weight: 400;
+      }
+      #epgBar span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* The programme being watched is the one line that has to land at a
+         glance, so it is set heavier than the banner around it. Declared after
+         the #epgBar span rule on purpose: both set a weight, and equal
+         specificity means the later one wins, so putting it above would be
+         silently ignored. The countdown keeps the banner's own weight - it is a
+         changing detail, and matching it would make both lines shout. */
+      #epgBar #epgNow {
+        font-weight: 900;
+      }
+      #epgLogo {
+        flex: 0 0 auto;
+        width: 186px;
+        height: 104px;
+        object-fit: contain;
+        filter: brightness(0) invert(1);
+        /* Every logo white, whatever colour it arrived in. brightness(0) collapses all
+           three channels to black, then invert(1) flips that to pure white. The
+           two steps in that order matter: brightness(0) on its own would leave
+           a black logo, and invert(1) alone would just swap the bright ones
+           (AMC, CNN, Fox) to black and lose them against the banner.
+
+           Lettering survives because these logos knock out with TRANSPARENCY,
+           not with dark pixels, so the shape is carried by the alpha channel and
+           the filter never touches it. Verified against the awkward ones - ESPN-U
+           (red on black), Golf Channel (multi-colour peacock), Fox Sports 1 and
+           ACC (two-tone), TNT and AMC (white with knocked-out letters) - all of
+           which come out white and readable. */
       }
       #stage {
         display: none;
@@ -123,7 +256,6 @@
         background: #000;
         border-radius: 12px;
         overflow: hidden;
-        margin-bottom: 48px;
       }
       #stage.on {
         display: block;
@@ -206,6 +338,11 @@
         #stageMsg .spin::after,
         #stage.on {
           animation: none !important;
+        }
+        /* The banner still appears and disappears, it just stops travelling to
+           do it. Taking it away instantly would defeat the point of it. */
+        #epgBar {
+          transition: none !important;
         }
       }
 
@@ -353,6 +490,14 @@
         max-width: none;
         border-radius: 0;
       }
+      /* The wrapper carries the width in WIDE, so it has to follow, or the
+         picture would be edge to edge while the banner stayed inset. */
+      body.wide #frame {
+        max-width: none;
+      }
+      body.wide #epgBar {
+        border-radius: 0;
+      }
 
       /* A short-lived note, used for the "this channel can't use InMotion"
          fallback and for a tap that needs sound. Deliberately quiet: it should
@@ -465,15 +610,35 @@
     </header>
 
     <main>
-      <video id="myPlayer" class="video-js" controls></video>
+      <!-- Both picture surfaces live in here: the normal player and the
+           InMotion canvas. The wrapper is what lets one banner sit over
+           whichever is showing, and gives a single element to listen to for a
+           tap on the picture. It is NOT clipped (overflow is deliberately left
+           alone), so a player going fullscreen is not cut off by its wrapper. -->
+      <div id="frame">
+        <video id="myPlayer" class="video-js" controls></video>
 
-      <!-- InMotion picture. WebCodecs frames are painted straight onto the
-           canvas; the stage around it is what you actually see, and it stays
-           on screen (black) whenever the mode is on, even at rest. -->
-      <div id="stage">
-        <canvas id="myCanvas" width="1280" height="720"></canvas>
-        <div id="stageMsg" class="hidden-el">
-          <span class="spin"></span><span id="stageMsgText">Loading</span>
+        <!-- InMotion picture. WebCodecs frames are painted straight onto the
+             canvas; the stage around it is what you actually see, and it stays
+             on screen (black) whenever the mode is on, even at rest. -->
+        <div id="stage">
+          <canvas id="myCanvas" width="1280" height="720"></canvas>
+          <div id="stageMsg" class="hidden-el">
+            <span class="spin"></span><span id="stageMsgText">Loading</span>
+          </div>
+        </div>
+
+        <!-- What is on, and what is next, as a banner across the top of the
+             picture. It sits over whichever frame is showing rather than
+             inside one of them, so switching modes does not lose it. Top
+             corners only: the frames below round theirs, and the banner has to
+             follow them rather than float over the page. -->
+        <div id="epgBar" class="hidden-el">
+          <div class="epgInfo">
+            <div class="epgLine"><b>Now playing</b><span id="epgNow">&mdash;</span></div>
+            <div class="epgLine" id="epgNextLine"><i id="epgNext">IN &mdash;</i><span id="epgNextTitle">&mdash;</span></div>
+          </div>
+          <img id="epgLogo" alt="" decoding="async">
         </div>
       </div>
 
@@ -505,6 +670,14 @@
       var muteToggle = document.getElementById('muteToggle');
       var wideToggle = document.getElementById('wideToggle');
       var noteEl = document.getElementById('note');
+      var epgBar = document.getElementById('epgBar');
+      var epgNow = document.getElementById('epgNow');
+      var epgNext = document.getElementById('epgNext');
+      var epgNextTitle = document.getElementById('epgNextTitle');
+      var epgNextLine = document.getElementById('epgNextLine');
+      var epgInfo = epgBar.querySelector('.epgInfo');
+      var epgLogo = document.getElementById('epgLogo');
+      var frame = document.getElementById('frame');
 
       // =====================================================================
       // InMotion mode
@@ -645,6 +818,288 @@
         if (loadTimer) { clearTimeout(loadTimer); loadTimer = 0; }
       }
 
+      // =====================================================================
+      // What's on / what's next
+      //
+      // The guide is a single gzipped XMLTV file: about 6 MB over the wire and
+      // roughly 70 MB of text once expanded, covering every channel the
+      // provider carries, not just the ones on this page. Decompressing that
+      // into a string and handing it to DOMParser costs a couple of hundred
+      // megabytes and a visible stall, so it is never done.
+      //
+      // Instead the response is streamed through DecompressionStream and
+      // scanned a chunk at a time, keeping only two entries per channel - the
+      // programme playing now and the one after it. That is all the overlay
+      // ever shows, and it turns a 70 MB document into a few hundred KB.
+      //
+      // One pass serves every channel, so switching channels is a lookup and
+      // not a download. The pass runs on idle rather than at load: it is 6 MB,
+      // which should not be spent before anyone has asked to watch anything.
+      // =====================================================================
+      var EPG_URL = 'https://starlite.best/api/epg/ddo5142011/2+{KwUO8:5$41m/full.xml.gz';
+      // Fetched ONCE per page load, at load. It is 6 MB and it covers every
+      // channel on the page at once, so re-fetching it later buys very little -
+      // a guide that is a couple of hours stale is still the right answer to
+      // "what is on", and the countdown is computed against the clock rather
+      // than against the file, so it stays honest as time passes.
+      var epgIndex = {};
+      var epgBusy = null;
+
+      // xmltv timestamps are "20261004020000 +0000", always UTC, which is worth
+      // relying on: comparing them as local time would shift every programme by
+      // the car's offset and put "up next" on the wrong side of the clock.
+      function epgWhen(s) {
+        var m = /^\s*(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/.exec(s || '');
+        if (!m) return NaN;
+        return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+      }
+
+      function epgText(s) {
+        return String(s || '')
+          .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'")
+          .replace(/&nbsp;/g, ' ')
+          .trim();
+      }
+
+      // Matched against the whole chunk rather than sliced into blocks first:
+      // a global regex walks the buffer once, and the text between matches is
+      // never copied anywhere.
+      var EPG_BLOCK = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/g;
+
+      function epgHarvest(block, now, into) {
+        var ch = /channel="([^"]+)"/.exec(block[1]);
+        if (!ch) return;
+        var st = /\bstart="([^"]+)"/.exec(block[1]);
+        var sp = /\bstop="([^"]+)"/.exec(block[1]);
+        if (!st || !sp) return;
+        var from = epgWhen(st[1]), to = epgWhen(sp[1]);
+        if (!(from <= now && now < to) && !(from > now)) return;
+        var ti = /<title[^>]*>([\s\S]*?)<\/title>/.exec(block[2]);
+        var title = epgText(ti && ti[1]);
+        var e = into[ch[1]] || (into[ch[1]] = { now: null, next: null });
+        if (from <= now && now < to) {
+          if (!e.now) e.now = { from: from, to: to, title: title };
+        } else if (from > now) {
+          // Programmes are in time order per channel, so the first one starting
+          // after now is the next one. Anything later is not worth keeping.
+          if (!e.next) e.next = { from: from, to: to, title: title };
+        }
+      }
+
+      function epgScan() {
+        return fetch(EPG_URL, { credentials: 'omit' })
+          .then(function (res) {
+            if (!res.ok) throw new Error('epg http ' + res.status);
+            if (!res.body || !self.DecompressionStream) throw new Error('no stream support');
+            return res.body.pipeThrough(new DecompressionStream('gzip')).getReader();
+          })
+          .then(function (reader) {
+            var dec = new TextDecoder('utf-8');
+            var into = {};
+            var carry = '';
+            function pump() {
+              return reader.read().then(function (r) {
+                // decode(..., {stream:true}) keeps multi-byte characters that
+                // straddle a chunk boundary intact.
+                carry += r.done ? dec.decode() : dec.decode(r.value, { stream: true });
+                EPG_BLOCK.lastIndex = 0;
+                var m, consumed = 0;
+                while ((m = EPG_BLOCK.exec(carry))) {
+                  epgHarvest(m, epgNowMs, into);
+                  consumed = EPG_BLOCK.lastIndex;
+                }
+                // Drop everything up to the end of the last complete match and
+                // keep only the block the chunk edge cut in half. Trimming to
+                // the regex's own lastIndex instead would be wrong: a failed
+                // exec resets it to 0, so nothing would ever be released and
+                // appending each chunk onto 70 MB of carried text would make
+                // the scan quadratic.
+                carry = carry.slice(consumed);
+                return r.done ? into : pump();
+              });
+            }
+            return pump();
+          });
+      }
+
+      // Set once at the start of a pass and held for its duration, so every
+      // programme in a 70 MB file is judged against the same instant. Judging
+      // each against a fresh Date.now() would make the last channel in the file
+      // answer for a slightly later time than the first.
+      var epgNowMs = 0;
+
+      function epgRefresh() {
+        if (epgBusy) return epgBusy;
+        epgNowMs = Date.now();
+        epgBusy = epgScan()
+          .then(function (into) {
+            epgIndex = into;
+            // Repaint now, not on the next channel change: the guide usually
+            // lands while a channel is already on screen, and without this the
+            // logo would sit there with no text until the next tap.
+            epgPaint();
+          })
+          .catch(function () {
+            // A missing guide is not worth a message: the banner just stays
+            // empty. Failing quietly keeps a 6 MB download failure from looking
+            // like the player broke.
+          })
+          .then(function () {
+            epgBusy = null;
+          });
+        return epgBusy;
+      }
+
+      // ---------------------------------------------------------------------
+      // Painting. The countdown is recomputed on a timer rather than trusted to
+      // stay right, because a car can sit parked with the page open.
+      // ---------------------------------------------------------------------
+      function epgPaint() {
+        if (!epgBar || !currentChannel) return;
+        var e = epgIndex[currentChannel];
+        epgNextLine.style.display = 'none';
+        if (!e || (!e.now && !e.next)) {
+          // No guide entry for this channel. The logo alone still identifies it,
+          // so the bar stays rather than disappearing.
+          epgInfo.style.visibility = 'hidden';
+          return;
+        }
+        epgInfo.style.visibility = '';
+        epgNow.textContent = e.now && e.now.title ? e.now.title : '—';
+        if (e.next) {
+          epgNextLine.style.display = '';
+          epgNextTitle.textContent = e.next.title || '—';
+          epgPaintCountdown();
+        }
+      }
+
+      // Both halves of the up-next row: the countdown, which changes on its own
+      // every 30 seconds, and the title behind it, which does not. Only the
+      // countdown is redrawn here.
+      function epgPaintCountdown() {
+        var e = currentChannel && epgIndex[currentChannel];
+        if (!e || !e.next) return;
+        var left = e.next.from - Date.now();
+        if (left < 60000) {
+          // Under a minute, counting in minutes would say "IN 1 MIN" all the
+          // way down to zero, and keep saying it after the programme had
+          // started.
+          epgNext.textContent = 'IN ' + Math.max(0, Math.round(left / 1000)) + ' SEC';
+        } else {
+          epgNext.textContent = 'IN ' + Math.ceil(left / 60000) + ' MIN';
+        }
+      }
+
+      // Whether there is a picture underneath to put the banner on. Without this the
+      // banner appears the instant a channel is tapped, which is before the
+      // frame is up - so it flashes over a black box, or over the gap where the
+      // frame is about to be. A banner with no picture under it is a caption
+      // floating in space.
+      function frameIsUp() {
+        if (DRIVE.on) {
+          // InMotion: the stage has to be raised AND the engine has to have put
+          // a frame on the canvas. A raised-but-empty stage is a black box.
+          if (!stage.classList.contains('on')) return false;
+          var st = engine && engine.live ? engine.live : null;
+          return !!(st && st.drawn > 0);
+        }
+        // Normal player: the element has to be on screen with media in it.
+        // NOTE: getElementById('myPlayer') is NOT the <video> here. video.js
+        // replaces it with a wrapper DIV that keeps the id and carries the
+        // vjs-* classes; the real element is a child and takes the id
+        // myPlayer_html5_api. Reading readyState off the DIV gives undefined,
+        // which compares false and would leave the banner hidden forever.
+        var v = document.querySelector('#myPlayer video');
+        return !!(v && v.readyState >= 2);
+      }
+
+      // Called when the channel changes, and from the tick below. The data is
+      // loaded and painted straight away - it is cheap and the guide may not be
+      // there yet - but the banner itself waits for a frame to appear.
+      function showEpg(channel) {
+        if (!epgBar) return;
+        if (!channel) {
+          epgBar.classList.add('hidden-el');
+          clearTimeout(epgHideTimer);
+          return;
+        }
+        epgLogo.src = 'logos/' + channel + '.png';
+        // Decorative, and the grid hides a logo it cannot load rather than
+        // showing a broken-image box. The same here: not every channel in the
+        // guide has a logo file.
+        epgLogo.alt = '';
+        epgLogo.style.display = '';
+        epgLogo.onerror = function () { epgLogo.style.display = 'none'; };
+        epgPaint();
+        epgSync();
+        // Switching channel while the banner is already up has to bring it back
+        // and restart its hold, or the new channel's title would arrive under a
+        // banner that is halfway through fading out. epgSync() only reveals on
+        // the hidden edge, so this asks for it explicitly.
+        if (!epgBar.classList.contains('hidden-el')) epgReveal();
+      }
+
+      // Show the banner if and only if there is a frame under it and a channel
+      // selected. Both directions matter: it hides again if the frame goes away
+      // (mode switched off, playback stopped) and shows when one arrives.
+      //
+      // Note the transition guard: epgReveal() RESTARTS the fade timer, so
+      // calling it on every tick would reset the countdown a few hundred times a
+      // second and the banner would sit there permanently, never fading out.
+      // It is only called on the hidden -> shown edge; once it is up, staying up
+      // is nobody's business but the timer and the user's tap.
+      function epgSync() {
+        if (!epgBar) return;
+        if (currentChannel && frameIsUp()) {
+          var wasHidden = epgBar.classList.contains('hidden-el');
+          epgBar.classList.remove('hidden-el');
+          if (wasHidden) epgReveal();
+        } else {
+          epgBar.classList.add('hidden-el');
+          clearTimeout(epgHideTimer);
+        }
+      }
+
+      // How long the banner stays up before it fades out of the picture.
+      var EPG_HOLD_MS = 5000;
+      var epgHideTimer = 0;
+
+      // Show it and restart the clock. Called on every channel change and on
+      // every tap of the frame, so the two paths cannot drift apart.
+      function epgReveal() {
+        if (!epgBar || epgBar.classList.contains('hidden-el')) return;
+        epgBar.classList.remove('gone');
+        clearTimeout(epgHideTimer);
+        epgHideTimer = setTimeout(function () {
+          epgBar.classList.add('gone');
+        }, EPG_HOLD_MS);
+      }
+
+      // A tap anywhere on the picture brings the banner back for another
+      // stretch, in either mode. It is the only thing the picture itself does,
+      // and it had no handler before, so nothing is taken away from the player.
+      //
+      // The stop() is the important part. In the normal player a tap on the
+      // video is a PLAY/PAUSE, and video.js binds it on the element itself, so a
+      // plain listener on an ancestor is too late to stop it - hence capture,
+      // which runs before the event ever reaches the video. Without this, the
+      // banner would reappear but the picture would pause under the driver's
+      // finger, which is the opposite of what a tap on the picture should do.
+      //
+      // The player's own controls are let through: a tap on the control bar, or
+      // on the big play button covering the picture before playback starts, has
+      // to keep working or the fallback player would be unusable.
+      frame.addEventListener('click', function (e) {
+        var t = e.target;
+        if (t && t.closest && t.closest('.vjs-control-bar, .vjs-big-play-button')) return;
+        if (!epgBar.classList.contains('hidden-el')) epgReveal();
+        if (!DRIVE.on) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }, true);
+
       // The two libraries are only fetched when InMotion mode is actually used, so
       // an ordinary desktop visit does not pay for them.
       var LIB_SOURCES = [
@@ -752,6 +1207,9 @@
         } else {
           setStageUp(false);
         }
+        // Which surface is showing just changed, so whether there is a picture
+        // under the banner changed with it.
+        epgSync();
       }
 
       // Build the engine if it is not there yet, then play a channel through it.
@@ -813,6 +1271,7 @@
         video.style.display = "none";
         video.classList.remove('vjs-fluid');
         currentChannel = null;
+        showEpg(null);
         if (selected) { selected.classList.remove('selected'); selected = null; }
         // Collapse the stage: with nothing playing there is nothing to show, and
         // an empty black box above the grid just pushes the channels off screen.
@@ -875,6 +1334,7 @@
         var video = document.getElementById("myPlayer");
         window.scrollTo({ top: 0, behavior: 'smooth' });
         currentChannel = channel;
+        showEpg(channel);
         // Gate on the mode the user asked for, NOT on whether the engine happens
         // to be built yet. Checking `engine` here was the bug: on a restored
         // InMotion session it is still null, so this fell through to video.js
@@ -885,6 +1345,12 @@
         video.classList.add("vjs-fluid");
         player.src({ src: channelUrl(channel), type: 'application/x-mpegURL' });
         player.play();
+        // The element is on screen now but there is no picture in it yet. Show
+        // the banner on the first one that arrives rather than over the blank.
+        video.addEventListener('loadeddata', function once() {
+          video.removeEventListener('loadeddata', once);
+          epgSync();
+        });
       }
 
       function closeFrame() {
@@ -934,6 +1400,24 @@
       }
 
       loadChannels();
+
+      // The guide, fetched once as the page loads and never again. Nothing waits
+      // on it: by the time anyone taps a channel it is normally already indexed,
+      // and if it is not, the banner fills in when it lands.
+      epgRefresh();
+
+      // "Up next in 12 min" has to keep counting even if the page is left open
+      // for hours, which in a parked car it will be. Cheap: one repaint a minute
+      // and nothing at all while the bar is hidden.
+      setInterval(function () {
+        // Re-check the frame as well as the clock. This is what puts the banner
+        // up when playback finally starts, and takes it down again if the frame
+        // goes away - the two events are not otherwise hooked together, and
+        // waiting on both would mean a tap before the first frame simply did
+        // nothing.
+        epgSync();
+        if (currentChannel && !epgBar.classList.contains('hidden-el')) epgPaintCountdown();
+      }, 400);
 
       // Apply the stored choice. The engine is only built once the toggle is
       // actually used, so a returning Drive-mode visitor sees the canvas and

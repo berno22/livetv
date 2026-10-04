@@ -7,7 +7,11 @@
 // page and every one of those changes looks like it did not deploy.
 // v7: Mute and Wide added to the header, the loading indicator enlarged, and
 // InMotion audio locked to the picture. Same reason as above.
-const CACHE_NAME = 'starlite-logos-v7';
+// v8: the now/next guide banner. The guide is fetched from the provider and not
+// cached here, but index.html changed and this worker caches navigations, so
+// without the bump a returning visitor keeps the previous page and the banner
+// is simply not there - which looks exactly like a broken deploy.
+const CACHE_NAME = 'starlite-logos-v8';
 
 self.addEventListener('install', event => {
   self.skipWaiting();
