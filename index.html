@@ -13,10 +13,13 @@
         --text: #1a1a1a;
         --muted: #777777;
         --line: #d0d0d0;
+        /* Red. The Live badge used to own this and was removed, so nothing else
+           on the page is red now and it is free to mean one thing: muted. */
         --accent: #e82127;
-        /* Green, deliberately not the red accent. The red is the Live badge's
-           colour and means "recording"; a red Drive toggle read as a second
-           live indicator rather than a mode. */
+        /* Green means InMotion is on, and sound is coming out of the speaker. It
+           is not used as a generic "good" colour on buttons, so a green pill in
+           the header still reads as a mode or a working speaker and not as
+           decoration. */
         --go: #12a150;
         /* The loading ink. The spinner ring and the "Loading" label are the same
            colour, so it is declared once here and they cannot drift apart. */
@@ -401,9 +404,11 @@
          borrow its pill shape for the same reason. Wide comes first because it
          is a mode like InMotion; Mute is a one-touch action and sits last.
 
-         Neither turns green: --go means "InMotion is on" and nothing else, so
-         an active Mute or Wide is drawn in ink. Two green pills in a row would
-         stop saying which control is the mode. */
+         Neither turns green for the reason InMotion does: --go has to keep
+         meaning "this is the mode you are in". Mute is the exception, and only
+         because its green/red reports a fact about the audio rather than
+         claiming to be a mode. Wide stays in ink, so a green pill in the
+         header is never ambiguous. See the Mute rules further down. */
       #muteToggle,
       #wideToggle {
         display: inline-flex;
@@ -430,10 +435,23 @@
         color: var(--text);
         border-color: var(--text);
       }
+      /* 16px -> 21px, a 31% bump, so the speaker is readable at arm's length in a
+         car. Note the stroke thickens as well: it is 2 units in a 24-unit
+         viewBox, so it renders at 2*21/24 = 1.75px instead of 1.33px. That is
+         wanted, but it means the icon gains weight as well as size.
+
+         The svg is this button's ONLY content, so the pill is sized entirely by
+         it plus padding - grow the icon and the pill grows with it. The padding
+         below hands back exactly the 5px the icon gained, 2.5px a side, holding
+         the button at its original 42x32. These two numbers are a pair: change
+         one and the other has to move with it. */
       #muteToggle svg {
         display: block;
-        width: 16px;
-        height: 16px;
+        width: 21px;
+        height: 21px;
+      }
+      #muteToggle {
+        padding: 4.5px 9.5px;
       }
       /* The icon is the whole label, so a state change swaps the glyph rather
          than the word. The speaker stays put and the waves are replaced by a
@@ -441,7 +459,34 @@
       #muteToggle .cross { display: none; }
       #muteToggle.on .waves { display: none; }
       #muteToggle.on .cross { display: block; }
-      #muteToggle.on,
+      /* Mute is the one control here whose state is good/bad rather than
+         on/off, so it is the one that gets colour: green while sound is coming
+         out, red once it is muted. Wide stays in ink beside it.
+
+         Note which class means what, because it is the opposite of what "on"
+         suggests. setMute() adds .on when MUTED is true, so .on is the MUTED
+         state and the colour is on the element itself for sound and on .on for
+         muted. */
+      #muteToggle {
+        color: var(--go);
+        border-color: rgba(18, 161, 80, 0.4);
+      }
+      #muteToggle.on {
+        color: var(--accent);
+        border-color: rgba(232, 33, 39, 0.4);
+        background: rgba(232, 33, 39, 0.07);
+      }
+      /* Hover must not fall back to ink. On a green button that reads as the
+         state being cancelled rather than the control being highlighted, so
+         each state just goes to its own colour at full strength. */
+      #muteToggle:hover {
+        color: var(--go);
+        border-color: var(--go);
+      }
+      #muteToggle.on:hover {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
       #wideToggle.on {
         color: var(--text);
         border-color: var(--text);
