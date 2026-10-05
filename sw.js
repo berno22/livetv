@@ -12,7 +12,8 @@
 // without the bump a returning visitor keeps the previous page and the banner
 // is simply not there - which looks exactly like a broken deploy.
 // v9: same reason for the mute button going green/red and its icon growing.
-const CACHE_NAME = 'starlite-logos-v9';
+// v10: InMotion retries before falling back to video.js.
+const CACHE_NAME = 'starlite-logos-v10';
 
 self.addEventListener('install', event => {
   self.skipWaiting();

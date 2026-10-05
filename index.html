@@ -764,6 +764,31 @@
       var noteTimer = 0;
       var loadTimer = 0;
 
+      // How long one attempt is given to put a frame on the canvas before it is
+      // called a failure. This is the window a slow connection is judged on, not
+      // a timeout on the whole channel: once a frame lands the guard is moot.
+      var DRIVE_ATTEMPT_MS = 9000;
+      // Retries before handing the channel to video.js. Counts RETRIES, not
+      // attempts, so 3 means four goes in total.
+      //
+      // Worth knowing the cost: a channel that InMotion genuinely cannot decode
+      // now sits through four of these windows before video.js takes over. That
+      // is a deliberate trade - a bad first second on a phone hotspot was
+      // demoting a perfectly good channel to the lesser player, which was the
+      // bug. Drop this to 0 to get the old one-shot behaviour back.
+      var DRIVE_RETRIES = 3;
+      // Gap between a failure and the next open. Short: a hard failure (the
+      // playlist fetch itself threw) has already cost a second or two, and
+      // there is nothing to gain from lingering on it.
+      var DRIVE_RETRY_MS = 1500;
+      var driveRetries = 0;
+      var driveRetryTimer = null;
+      // The engine gen whose failure has already been acted on. The engine emits
+      // 'fail' from five places and one bad segment can trip several of them, so
+      // without this a single failure would schedule several retries and quietly
+      // multiply the attempts.
+      var driveFailedGen = -1;
+
       // =====================================================================
       // Mute and Wide
       //
@@ -1211,13 +1236,67 @@
         noteTimer = setTimeout(function () { noteEl.classList.remove('show'); }, ms || 3600);
       }
 
-      // If the engine cannot run this channel, hand it back to video.js rather
-      // than leaving a dead screen. 83 channels of unknown configs means this
-      // will happen eventually.
-      function onEngineFail(msg) {
+      // The one place a failed InMotion attempt becomes either another go or a
+      // handover to video.js. Both routes into failure - the engine's own 'fail'
+      // event and the no-frames guard in openDrive() - come through here, so the
+      // retry budget is counted in one place and one failure cannot spend it
+      // twice.
+      function onDriveAttemptFailed(gen, msg) {
+        if (!DRIVE.on || !engine) return;
+        // A newer attempt is already under way. Its own guard owns the outcome.
+        if (gen !== engine.gen) return;
+        // Already acted on this attempt. See driveFailedGen.
+        if (driveFailedGen === gen) return;
+
+        // "needs ..." is a capability failure - no WebCodecs, or a library that
+        // never arrived. Reopening produces exactly the same answer every time,
+        // so it is the one failure not worth a retry: retrying only puts four
+        // watch windows of black screen in front of a foregone conclusion.
+        var capability = msg && msg.indexOf('needs ') === 0;
+        driveFailedGen = gen;
+
+        if (!capability && driveRetries < DRIVE_RETRIES) {
+          driveRetries++;
+          retryDrive();
+          return;
+        }
+
         showIdle();
-        showNote('InMotion can\'t play this channel - using the normal player', 4200);
+        showNote(capability
+          ? 'This device can\'t run InMotion - using the normal player'
+          : 'InMotion can\'t play this channel - using the normal player', 4200);
         fallbackToVideoJs();
+      }
+
+      // Re-opens the same channel from the top. A fresh open() rather than a poke
+      // at the failed one: open() tears the pipeline down and clears the state
+      // the failure poisoned, and bumps gen so the failed attempt's own timers
+      // orphan themselves.
+      function retryDrive() {
+        clearDriveRetry();
+        if (!DRIVE.on || !engine || !currentChannel) return;
+        driveRetryTimer = setTimeout(function () {
+          driveRetryTimer = null;
+          // Everything can change in the gap: the user can pick another channel,
+          // tap CHANNELS, or flip the toggle off. Retrying into any of those
+          // would either resurrect a channel they left or start playback nobody
+          // asked for.
+          if (!DRIVE.on || !engine || !currentChannel) return;
+          showNote('Still trying InMotion - ' + (driveRetries + 1) + ' of ' + (DRIVE_RETRIES + 1), 2600);
+          openDrive(currentChannel, true);
+        }, DRIVE_RETRY_MS);
+      }
+
+      function clearDriveRetry() {
+        if (driveRetryTimer) { clearTimeout(driveRetryTimer); driveRetryTimer = null; }
+      }
+
+      // The engine's own failure event. Carries no attempt id, so the live gen is
+      // read here; onDriveAttemptFailed re-checks it against the engine's current
+      // one, which is what catches an event that arrives after a reopen.
+      function onEngineFail(msg) {
+        if (!engine) return;
+        onDriveAttemptFailed(engine.gen, msg);
       }
 
       function fallbackToVideoJs() {
@@ -1245,6 +1324,8 @@
           try { player.pause(); } catch (e) {}
           // Turning the mode on does not by itself bring the picture up: nothing
           // is playing until a channel is tapped.
+          driveRetries = 0;
+          clearDriveRetry();
           setStageUp(!!currentChannel);
         } else if (engine) {
           setStageUp(false);
@@ -1302,6 +1383,11 @@
       // right there, so it is the obvious target for "I want it off" - and a
       // black box with no way to dismiss it is worse than no picture at all.
       function stopPlayback() {
+        // Abandon any pending retry first. Without this the timer survives the
+        // close and fires afterwards, and the user who tapped CHANNELS to get
+        // rid of the picture gets it started again underneath them.
+        clearDriveRetry();
+        driveRetries = 0;
         if (engine) engine.close();
         // Only clear the source if one is actually loaded. Setting src to ""
         // on an element that never had a source makes video.js log
@@ -1343,14 +1429,22 @@
 
       // Open a channel in the engine, with a guard so a channel that cannot
       // start does not sit on a blank canvas forever.
-      function openDrive(channel) {
+      //
+      // isRetry is what keeps the retry budget honest: a retry keeps counting,
+      // and anything else - a new channel, a fresh startDrive - starts it over.
+      function openDrive(channel, isRetry) {
         if (!engine) return;
+        if (!isRetry) driveRetries = 0;
+        // A new channel must not inherit the old one's pending retry.
+        clearDriveRetry();
         var url = channelUrl(channel);
         engine.open(url, { name: channel });
         // Read the generation AFTER open(): open() bumps it itself, so
         // capturing it beforehand would never match and the guard below would
         // fire on a channel that is actually fine.
         var gen = engine.gen;
+        // A new attempt gets a fresh allowance of exactly one failure action.
+        driveFailedGen = -1;
         setTimeout(function () {
           // Order matters, and all three checks are needed. InMotion being off
           // means the engine's own 'fail' event has already handed this channel
@@ -1362,12 +1456,14 @@
           if (!DRIVE.on || !engine) return;
           if (engine.gen !== gen) return;
           var st = engine.state();
+          // Nothing drawn and nothing wrong yet is NOT a failure - it is still
+          // loading, possibly on a slow connection, and the next attempt is
+          // exactly the wrong moment to give up on it. Only an actual reported
+          // failure, or the window closing with no picture, counts.
           if (st.stage === 'error' || (!st.drawn && st.fatal)) {
-            showIdle();
-            showNote('InMotion can\'t play this channel - using the normal player', 4200);
-            fallbackToVideoJs();
+            onDriveAttemptFailed(gen, st.fatal);
           }
-        }, 9000);
+        }, DRIVE_ATTEMPT_MS);
       }
 
       function channelUrl(channel) {
@@ -1378,6 +1474,12 @@
       function loadChannel(channel) {
         var video = document.getElementById("myPlayer");
         window.scrollTo({ top: 0, behavior: 'smooth' });
+        // A new pick abandons the previous channel's retry budget and any retry
+        // already scheduled for it. Done here rather than left to openDrive()
+        // because startDrive() awaits ensureEngine() first: a retry landing in
+        // that gap would open this new channel under the old channel's name.
+        clearDriveRetry();
+        driveRetries = 0;
         currentChannel = channel;
         showEpg(channel);
         // Gate on the mode the user asked for, NOT on whether the engine happens
