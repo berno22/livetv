@@ -771,15 +771,27 @@
       // Retries before handing the channel to video.js. Counts RETRIES, not
       // attempts, so 3 means four goes in total.
       //
-      // Worth knowing the cost: a channel that InMotion genuinely cannot decode
-      // now sits through four of these windows before video.js takes over. That
-      // is a deliberate trade - a bad first second on a phone hotspot was
-      // demoting a perfectly good channel to the lesser player, which was the
-      // bug. Drop this to 0 to get the old one-shot behaviour back.
-      var DRIVE_RETRIES = 3;
+      // Unlimited, deliberately: the whole reason this retry loop exists is that
+      // InMotion giving up quietly and dropping you into the lesser player is
+      // worse than waiting. A phone hotspot that stumbles, a moment of zero
+      // bars, a CDN hiccup - all recover on a later attempt, and a hard cap
+      // turns every one of them into a permanent downgrade for that channel.
+      //
+      // The cost of no cap: a channel InMotion genuinely cannot decode now
+      // retries forever and NEVER reaches video.js. That is the trade being
+      // made. The way out is manual - tap CHANNELS, pick another channel, or
+      // flip InMotion off - all three reset this counter.
+      //
+      // Set it to a number to reinstate a cap (3 = four attempts, 0 = the old
+      // one-shot behaviour). Nothing else needs changing.
+      var DRIVE_RETRIES = Infinity;
       // Gap between a failure and the next open. Short: a hard failure (the
       // playlist fetch itself threw) has already cost a second or two, and
       // there is nothing to gain from lingering on it.
+      //
+      // With no cap this becomes a request loop rather than a one-off, so the
+      // number matters more than it used to: a channel whose playlist 404s
+      // instantly will be re-requested roughly every (fail latency + 1.5s).
       var DRIVE_RETRY_MS = 1500;
       var driveRetries = 0;
       var driveRetryTimer = null;
@@ -1282,7 +1294,12 @@
           // would either resurrect a channel they left or start playback nobody
           // asked for.
           if (!DRIVE.on || !engine || !currentChannel) return;
-          showNote('Still trying InMotion - ' + (driveRetries + 1) + ' of ' + (DRIVE_RETRIES + 1), 2600);
+          // With no cap there is no "of N" to show, and "of Infinity" reads like
+          // a bug. Numbering the attempts still tells you it is not wedged.
+          var n = driveRetries + 1;
+          showNote(DRIVE_RETRIES === Infinity
+            ? 'Still trying InMotion - attempt ' + n
+            : 'Still trying InMotion - ' + n + ' of ' + (DRIVE_RETRIES + 1), 2600);
           openDrive(currentChannel, true);
         }, DRIVE_RETRY_MS);
       }

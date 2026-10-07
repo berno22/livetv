@@ -13,7 +13,8 @@
 // is simply not there - which looks exactly like a broken deploy.
 // v9: same reason for the mute button going green/red and its icon growing.
 // v10: InMotion retries before falling back to video.js.
-const CACHE_NAME = 'starlite-logos-v10';
+// v11: same feature, but the retry cap is removed.
+const CACHE_NAME = 'starlite-logos-v11';
 
 self.addEventListener('install', event => {
   self.skipWaiting();
